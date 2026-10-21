@@ -1,0 +1,319 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  schemas  = ["edupilot"]
+}
+
+enum Role {
+  OWNER
+  TEACHER
+  PARENT
+
+  @@schema("edupilot")
+}
+
+enum MemberStatus {
+  ACTIVE
+  INACTIVE
+
+  @@schema("edupilot")
+}
+
+enum CourseCategory {
+  ACADEMIC
+  ART
+  EARLY_CHILDHOOD
+  OTHER
+
+  @@schema("edupilot")
+}
+
+enum ArchiveStatus {
+  ACTIVE
+  ARCHIVED
+
+  @@schema("edupilot")
+}
+
+enum LessonStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+
+  @@schema("edupilot")
+}
+
+enum AttendanceStatus {
+  NOT_MARKED
+  PRESENT
+  ABSENT
+  LATE
+  LEAVE
+
+  @@schema("edupilot")
+}
+
+enum ReportStatus {
+  DRAFT
+  CONFIRMED
+  PUBLISHED
+  RETURNED
+
+  @@schema("edupilot")
+}
+
+/// 机构是租户边界。主键即租户标识，业务数据通过 organizationId 指向这里。
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  timezone  String    @default("Asia/Shanghai")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  users              User[]
+  students           Student[]
+  teachers           Teacher[]
+  courses            Course[]
+  classGroups        ClassGroup[]
+  parentStudentLinks ParentStudentLink[]
+  lessonSessions     LessonSession[]
+  lessonStudents     LessonStudent[]
+  teachingRecords    TeachingRecord[]
+  teachingReports    TeachingReport[]
+
+  @@schema("edupilot")
+}
+
+/// 登录身份。同一邮箱全局唯一；所属机构用 organizationId 隔离。
+model User {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  email          String       @unique
+  passwordHash   String
+  name           String
+  roles          Role[]
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  teacherProfile     Teacher?
+  parentStudentLinks ParentStudentLink[]
+  createdLessons     LessonSession[]
+  confirmedReports   TeachingReport[] @relation("ReportConfirmedBy")
+  publishedReports   TeachingReport[] @relation("ReportPublishedBy")
+
+  @@index([organizationId])
+  @@schema("edupilot")
+}
+
+/// 学生档案。停用只改变状态，不删除记录。
+model Student {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  name           String
+  studentNo      String?
+  grade          String?
+  contactNote    String?
+  status         MemberStatus       @default(ACTIVE)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  parentLinks    ParentStudentLink[]
+  lessonStudents LessonStudent[]
+  teachingReports TeachingReport[]
+
+  @@unique([organizationId, studentNo])
+  @@index([organizationId])
+  @@schema("edupilot")
+}
+
+/// 教师档案。可以先独立存在，之后再关联登录账号。
+model Teacher {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  userId         String?      @unique
+  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  name           String
+  contact        String?
+  status         MemberStatus @default(ACTIVE)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  classGroups    ClassGroup[]
+  lessonSessions LessonSession[]
+  teachingRecords TeachingRecord[]
+
+  @@index([organizationId])
+  @@schema("edupilot")
+}
+
+/// 课程类型。名称由机构自建，不等于某一节课。
+model Course {
+  id             String          @id @default(cuid())
+  organizationId String
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  name           String
+  category       CourseCategory?
+  description    String?
+  status         ArchiveStatus   @default(ACTIVE)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  classGroups    ClassGroup[]
+  lessonSessions LessonSession[]
+
+  @@index([organizationId])
+  @@schema("edupilot")
+}
+
+/// 班级或教学组。主讲教师可在以后的课次里单独调整。
+model ClassGroup {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  name           String
+  courseId       String
+  course         Course        @relation(fields: [courseId], references: [id])
+  teacherId      String
+  teacher        Teacher       @relation(fields: [teacherId], references: [id])
+  capacity       Int?
+  status         ArchiveStatus @default(ACTIVE)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  lessonSessions LessonSession[]
+
+  @@index([organizationId])
+  @@index([courseId])
+  @@index([teacherId])
+  @@schema("edupilot")
+}
+
+/// 某一天实际发生的一节课。课程和教师在创建时单独保存，之后改班级不会改写历史课次。
+model LessonSession {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  classGroupId   String
+  classGroup     ClassGroup    @relation(fields: [classGroupId], references: [id])
+  courseId       String
+  course         Course        @relation(fields: [courseId], references: [id])
+  teacherId      String
+  teacher        Teacher       @relation(fields: [teacherId], references: [id])
+  title          String?
+  startAt        DateTime
+  endAt          DateTime
+  location       String?
+  status         LessonStatus  @default(SCHEDULED)
+  createdById    String
+  createdBy      User          @relation(fields: [createdById], references: [id])
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  students       LessonStudent[]
+  teachingRecord TeachingRecord?
+  reports        TeachingReport[]
+
+  @@index([organizationId, startAt])
+  @@index([teacherId, startAt])
+  @@index([classGroupId])
+  @@schema("edupilot")
+}
+
+/// 一节课的实际学生名单和考勤。同一课次里同一学生只能出现一次。
+model LessonStudent {
+  id               String           @id @default(cuid())
+  organizationId   String
+  organization     Organization     @relation(fields: [organizationId], references: [id])
+  lessonSessionId  String
+  lessonSession    LessonSession    @relation(fields: [lessonSessionId], references: [id])
+  studentId        String
+  student          Student          @relation(fields: [studentId], references: [id])
+  attendanceStatus AttendanceStatus @default(NOT_MARKED)
+  attendanceNote   String?
+  lastAction       String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@unique([lessonSessionId, studentId])
+  @@index([organizationId])
+  @@index([studentId])
+  @@schema("edupilot")
+}
+
+/// 家长与学生的绑定。同一对关系只能存在一次。
+model ParentStudentLink {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  parentUserId   String
+  parent         User         @relation(fields: [parentUserId], references: [id])
+  studentId      String
+  student        Student      @relation(fields: [studentId], references: [id])
+  createdAt      DateTime     @default(now())
+
+  @@unique([parentUserId, studentId])
+  @@index([organizationId])
+  @@index([studentId])
+  @@schema("edupilot")
+}
+
+/// 教师对一节课的原始记录。一节课只保留一份，内部备注不会进入家长可见的报告。
+model TeachingRecord {
+  id                  String        @id @default(cuid())
+  organizationId      String
+  organization        Organization  @relation(fields: [organizationId], references: [id])
+  lessonSessionId     String        @unique
+  lessonSession       LessonSession @relation(fields: [lessonSessionId], references: [id])
+  teacherId           String
+  teacher             Teacher       @relation(fields: [teacherId], references: [id])
+  lessonContent       String        @default("")
+  studentPerformance  String        @default("")
+  difficulties        String        @default("")
+  homework            String?
+  teacherPrivateNote  String?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+  reports             TeachingReport[]
+
+  @@index([organizationId])
+  @@index([teacherId])
+  @@schema("edupilot")
+}
+
+/// 面向单个学生的教学报告。发布前家长不可见。
+model TeachingReport {
+  id               String        @id @default(cuid())
+  organizationId   String
+  organization     Organization  @relation(fields: [organizationId], references: [id])
+  lessonSessionId  String
+  lessonSession    LessonSession @relation(fields: [lessonSessionId], references: [id])
+  studentId        String
+  student          Student       @relation(fields: [studentId], references: [id])
+  teachingRecordId String
+  teachingRecord   TeachingRecord @relation(fields: [teachingRecordId], references: [id])
+  status           ReportStatus  @default(DRAFT)
+  summary          String        @default("")
+  strengths        String        @default("")
+  issues           String        @default("")
+  nextSteps        String        @default("")
+  homeworkSummary  String?
+  aiModel          String?
+  promptVersion    String?
+  generatedAt      DateTime?
+  confirmedById    String?
+  confirmedBy      User?         @relation("ReportConfirmedBy", fields: [confirmedById], references: [id])
+  confirmedAt      DateTime?
+  publishedById    String?
+  publishedBy      User?         @relation("ReportPublishedBy", fields: [publishedById], references: [id])
+  publishedAt      DateTime?
+  revisionNote     String?
+  revision         Int           @default(0)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@unique([lessonSessionId, studentId])
+  @@index([organizationId, status])
+  @@index([studentId])
+  @@schema("edupilot")
+}
