@@ -1,3 +1,4 @@
+import { AccountSecurity } from "@/components/account-security";
 import { requireRole } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
@@ -13,13 +14,11 @@ export default async function ParentAccountPage() {
 
   return (
     <section className="max-w-2xl">
-      <h1 className="text-[28px] font-semibold tracking-tight">账号 / 绑定信息</h1>
-      <p className="mt-2 leading-7 text-[var(--muted)]">这里只显示已经绑定到当前账号的孩子。新的绑定需要机构负责人签发的绑定码。</p>
-      <div className="mt-5 rounded-2xl border border-[var(--line)] bg-white p-5 text-sm">
-        <div className="font-semibold">{user.name}</div>
-        <div className="mt-1 text-xs text-[var(--muted)]">{user.phone ?? user.email}</div>
-        <p className="mt-3 text-xs text-[var(--muted)]">绑定手机号即将上线</p>
-      </div>
+      <AccountSecurity
+        email={user.email}
+        phone={user.phone}
+        note="这个账号只能查看已绑定的孩子。负责人可以收回绑定，但不能修改你的密码。"
+      />
       <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
         <div className="border-b border-[#eef1ee] px-4 py-3 text-sm font-semibold">已绑定孩子 · {links.length}</div>
         {links.length === 0 ? (

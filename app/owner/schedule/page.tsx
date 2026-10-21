@@ -34,7 +34,7 @@ export default async function OwnerSchedulePage({
     }),
     prisma.teacher.findMany({
       where: { organizationId: user.organizationId, status: "ACTIVE" },
-      select: { id: true, name: true, userId: true },
+      select: { id: true, name: true, user: { select: { roles: true } } },
       orderBy: { name: "asc" },
     }),
     prisma.student.findMany({
@@ -75,7 +75,7 @@ export default async function OwnerSchedulePage({
         teacherId: item.teacher.id,
         teacherName: item.teacher.name,
       }))}
-      teachers={teachers.map((teacher) => ({ id: teacher.id, name: teacher.name, linked: Boolean(teacher.userId) }))}
+      teachers={teachers.map((teacher) => ({ id: teacher.id, name: teacher.name, linked: teacher.user?.roles.includes("TEACHER") ?? false }))}
       students={students}
     />
   );

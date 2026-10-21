@@ -58,20 +58,37 @@ export async function bindUserPhone(
   });
 }
 
-export async function createTeacherInvite(db: Db, owner: { id: string; organizationId: string }, options?: { now?: Date }) {
+export async function createTeacherInvite(
+  db: Db,
+  owner: { id: string; organizationId: string },
+  options?: { now?: Date; teacherId?: string },
+) {
   const now = options?.now ?? new Date();
+  let teacherId: string | null = null;
+  if (options?.teacherId) {
+    const teacher = await db.teacher.findFirst({
+      where: { id: options.teacherId, organizationId: owner.organizationId },
+      select: { id: true, userId: true, accountUserId: true },
+    });
+    if (!teacher) return { ok: false as const, message: "找不到这位教师，或你无权为其他机构生成邀请码。" };
+    if (teacher.userId || teacher.accountUserId) {
+      return { ok: false as const, message: "这位老师已经有登录账号。在编辑里选择「关联账号」即可。" };
+    }
+    teacherId = teacher.id;
+  }
   const code = inviteCode();
   await db.membershipInvite.create({
     data: {
       organizationId: owner.organizationId,
       kind: "TEACHER",
       codeHash: hashInvite(code),
+      teacherId,
       createdById: owner.id,
       expiresAt: new Date(now.getTime() + inviteTtlMs),
       createdAt: now,
     },
   });
-  return { ok: true as const, code, message: "教师邀请码已生成。对方只能用这个邀请码加入本机构，不能自行选择角色。" };
+  return { ok: true as const, code, message: "教师邀请码已生成。对方注册后会自动关联这位老师，密码只有老师自己知道。" };
 }
 
 export async function createParentInvite(
@@ -191,14 +208,29 @@ export async function redeemMembershipInvite(db: PrismaClient, rawTicket: string
       if (invite.kind === "TEACHER") {
         const user = current ?? (await accountFromSignup(tx, ticket.phone, invite.organizationId, ["TEACHER"]));
         if (!user) throw new Error("手机号登记缺失，已回滚。");
-        if (current) {
-          if (!current.roles.includes("TEACHER")) {
-            await tx.user.update({ where: { id: current.id }, data: { roles: { set: [...current.roles, "TEACHER"] } } });
-          }
+        if (current && !current.roles.includes("TEACHER")) {
+          await tx.user.update({ where: { id: current.id }, data: { roles: { set: [...current.roles, "TEACHER"] } } });
         }
-        const profile = await tx.teacher.findUnique({ where: { userId: user.id }, select: { id: true } });
-        if (!profile) {
-          await tx.teacher.create({ data: { organizationId: invite.organizationId, name: user.name, userId: user.id } });
+        const reserved = await tx.teacher.findFirst({
+          where: { organizationId: invite.organizationId, OR: [{ userId: user.id }, { accountUserId: user.id }] },
+          select: { id: true },
+        });
+        if (invite.teacherId) {
+          const teacher = await tx.teacher.findFirst({
+            where: { id: invite.teacherId, organizationId: invite.organizationId },
+            select: { id: true, userId: true, accountUserId: true },
+          });
+          if (!teacher || teacher.userId || teacher.accountUserId || (reserved && reserved.id !== teacher.id)) {
+            return { ok: false as const, status: 400, message: "邀请码已失效。" };
+          }
+          await tx.teacher.update({
+            where: { id: teacher.id },
+            data: { userId: user.id, accountUserId: user.id },
+          });
+        } else if (!reserved) {
+          await tx.teacher.create({
+            data: { organizationId: invite.organizationId, name: user.name, userId: user.id, accountUserId: user.id },
+          });
         }
         const saved = await tx.user.findUniqueOrThrow({
           where: { id: user.id },

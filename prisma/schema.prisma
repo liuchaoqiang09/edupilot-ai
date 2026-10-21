@@ -124,7 +124,8 @@ model User {
   roles          Role[]
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
-  teacherProfile     Teacher?
+  teacherProfile     Teacher?             @relation("TeacherLogin")
+  accountTeacher     Teacher?             @relation("TeacherAccount")
   parentStudentLinks ParentStudentLink[]
   createdLessons     LessonSession[]
   confirmedReports   TeachingReport[] @relation("ReportConfirmedBy")
@@ -169,7 +170,10 @@ model Teacher {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
   userId         String?      @unique
-  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user           User?        @relation("TeacherLogin", fields: [userId], references: [id], onDelete: SetNull)
+  /// 这位老师注册过的登录账号。取消关联时保留，方便以后重新关联，不包含密码。
+  accountUserId  String?      @unique
+  accountUser    User?        @relation("TeacherAccount", fields: [accountUserId], references: [id], onDelete: SetNull)
   name           String
   contact        String?
   status         MemberStatus @default(ACTIVE)
@@ -178,6 +182,7 @@ model Teacher {
   classGroups    ClassGroup[]
   lessonSessions LessonSession[]
   teachingRecords TeachingRecord[]
+  membershipInvites MembershipInvite[]
 
   @@index([organizationId])
   @@schema("edupilot")
@@ -445,6 +450,8 @@ model MembershipInvite {
   codeHash       String       @unique
   studentId      String?
   student        Student?     @relation(fields: [studentId], references: [id])
+  teacherId      String?
+  teacher        Teacher?     @relation(fields: [teacherId], references: [id])
   createdById    String
   createdBy      User         @relation(fields: [createdById], references: [id])
   expiresAt      DateTime

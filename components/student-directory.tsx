@@ -231,11 +231,12 @@ export function StudentDirectory({
                         <span className="font-bold">{guardian.parentName}</span>
                         <span className="ml-2 text-[var(--muted)]">{guardian.parentEmail}</span>
                       </span>
-                      <button type="button" disabled={pending} onClick={() => removeGuardian(guardian.id)} className="font-bold text-[#9a6729]">解除</button>
+                      <button type="button" disabled={pending} onClick={() => removeGuardian(guardian.id)} className="font-bold text-[#9a6729]">收回账号</button>
                     </li>
                   ))}
                 </ul>
               )}
+              <p className="text-xs leading-5 text-[var(--muted)]">收回后，这位家长不能再查看这名学生。密码不会改变，之后可以重新绑定。</p>
               <form onSubmit={bindGuardian} className="mt-3 grid gap-2">
                 <label className="grid gap-1.5 text-xs font-bold">
                   绑定家长账号

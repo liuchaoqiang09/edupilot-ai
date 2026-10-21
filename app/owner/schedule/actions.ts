@@ -26,6 +26,7 @@ function refresh() {
   revalidatePath("/parent/schedule");
   revalidatePath("/parent/attendance");
   revalidatePath("/owner/billing");
+  revalidatePath("/owner");
 }
 
 function overlapMessage(lesson: { title: string | null; startAt: Date }) {
@@ -73,7 +74,7 @@ export async function createLesson(formData: FormData): Promise<ActionResult> {
 
   const teacher = await prisma.teacher.findFirst({
     where: { id: teacherId, organizationId: user.organizationId, status: "ACTIVE" },
-    select: { id: true, userId: true },
+    select: { id: true, user: { select: { roles: true } } },
   });
   if (!teacher) return { ok: false, fieldErrors: { teacherId: "只能选择本机构的在职教师。" } };
 
@@ -118,9 +119,9 @@ export async function createLesson(formData: FormData): Promise<ActionResult> {
     ok: true,
     warning: overlap
       ? "课次已保存。这位教师在同一时间还有另一节未取消的课。"
-      : teacher.userId
+      : teacher.user?.roles.includes("TEACHER")
         ? undefined
-        : "课次已保存。这位教师还没有关联登录账号，教师端暂时看不到这节课。",
+        : "课次已保存。这位教师还没有关联可登录的教师账号，教师端暂时看不到这节课。",
   };
 }
 
@@ -137,7 +138,7 @@ export async function updateLessonTeacher(lessonId: string, formData: FormData):
 
   const teacher = await prisma.teacher.findFirst({
     where: { id: teacherId, organizationId: user.organizationId, status: "ACTIVE" },
-    select: { id: true, userId: true },
+    select: { id: true, user: { select: { roles: true } } },
   });
   if (!teacher) return { ok: false, fieldErrors: { teacherId: "只能选择本机构的在职教师。" } };
   if (teacher.id === lesson.teacherId) return { ok: true };
@@ -158,9 +159,9 @@ export async function updateLessonTeacher(lessonId: string, formData: FormData):
     ok: true,
     warning: overlap
       ? "教师已更换。这位教师在同一时间还有另一节未取消的课。"
-      : teacher.userId
+      : teacher.user?.roles.includes("TEACHER")
         ? undefined
-        : "教师已更换。这位教师还没有关联登录账号，教师端暂时看不到这节课。",
+        : "教师已更换。这位教师还没有关联可登录的教师账号，教师端暂时看不到这节课。",
   };
 }
 
@@ -204,11 +205,43 @@ export async function removeLessonStudent(lessonId: string, studentId: string): 
 
 export async function cancelLesson(id: string): Promise<ActionResult> {
   const user = await requireRole("OWNER", "owner");
-  const updated = await prisma.lessonSession.updateMany({
-    where: { id, organizationId: user.organizationId, status: "SCHEDULED" },
-    data: { status: "CANCELLED" },
-  });
-  if (updated.count !== 1) return { ok: false, message: "这节课不存在，或已经不能取消。" };
+  let refunded = 0;
+  try {
+    refunded = await prisma.$transaction(async (tx) => {
+      const lesson = await tx.lessonSession.findFirst({
+        where: { id, organizationId: user.organizationId, status: "SCHEDULED" },
+        select: { id: true, courseId: true, students: { select: { id: true, studentId: true } } },
+      });
+      if (!lesson) throw new CourseHourError("这节课不存在，或已经不能取消。");
+      let returned = 0;
+      for (const row of lesson.students) {
+        const released = await releaseChargedHour(tx, {
+          organizationId: user.organizationId,
+          lessonStudentId: row.id,
+          studentId: row.studentId,
+          courseId: lesson.courseId,
+        });
+        if (released) returned += 1;
+      }
+      const updated = await tx.lessonSession.updateMany({
+        where: { id: lesson.id, organizationId: user.organizationId, status: "SCHEDULED" },
+        data: { status: "CANCELLED" },
+      });
+      if (updated.count !== 1) throw new CourseHourError("这节课不存在，或已经不能取消。");
+      await writeAudit(tx, {
+        organizationId: user.organizationId,
+        actorId: user.id,
+        action: "LESSON_CANCELLED",
+        targetType: "LessonSession",
+        targetId: lesson.id,
+        detail: returned > 0 ? `取消课次，并退回 ${returned} 次已扣课时` : "取消课次",
+      });
+      return returned;
+    });
+  } catch (error) {
+    if (error instanceof CourseHourError) return { ok: false, message: error.message };
+    throw error;
+  }
   refresh();
-  return { ok: true };
+  return { ok: true, message: refunded > 0 ? `课次已取消，并退回 ${refunded} 次已扣课时。` : "课次已取消。" };
 }

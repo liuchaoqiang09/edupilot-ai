@@ -9,6 +9,7 @@ export function TextField({
   defaultValue,
   placeholder,
   required,
+  type = "text",
   error,
 }: {
   label: string;
@@ -16,6 +17,7 @@ export function TextField({
   defaultValue?: string | null;
   placeholder?: string;
   required?: boolean;
+  type?: "text" | "password";
   error?: string;
 }) {
   return (
@@ -26,6 +28,7 @@ export function TextField({
       </span>
       <input
         name={name}
+        type={type}
         defaultValue={defaultValue ?? ""}
         placeholder={placeholder}
         required={required}

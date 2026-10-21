@@ -1,5 +1,5 @@
 import { OwnerBilling, type BillingStudent } from "@/components/owner-billing";
-import { lowHourThreshold } from "@/lib/course-hours";
+import { lowHourThreshold, periodNeedsRenewal, periodValidity, calendarDateKey } from "@/lib/course-hours";
 import { requireRole } from "@/lib/auth";
 import { dayRange, shanghaiDateKey } from "@/lib/datetime";
 import { prisma } from "@/lib/prisma";
@@ -20,18 +20,6 @@ function monthRange(todayKey: string) {
     end: dayRange(`${nextYear}-${String(nextMonth).padStart(2, "0")}-01`).start,
     previousStart: dayRange(`${previousYear}-${String(previousMonth).padStart(2, "0")}-01`).start,
   };
-}
-
-function utcDateKey(value: Date) {
-  return value.toISOString().slice(0, 10);
-}
-
-function periodState(windows: { start: string; end: string }[], today: string) {
-  const active = windows.filter((window) => window.start <= today && today <= window.end).sort((left, right) => right.end.localeCompare(left.end))[0];
-  if (active) return { end: active.end, status: "有效中" as const };
-  const latest = [...windows].sort((left, right) => right.end.localeCompare(left.end))[0];
-  if (!latest) return { end: "—", status: "已过期" as const };
-  return { end: latest.end, status: latest.end < today ? "已过期" as const : "未开始" as const };
 }
 
 function yuan(value: { toString(): string } | null) {
@@ -121,7 +109,7 @@ export default async function OwnerBillingPage({
         windows: [],
       };
       if (enrollment.startDate && enrollment.endDate) {
-        current.windows.push({ start: utcDateKey(enrollment.startDate), end: utcDateKey(enrollment.endDate) });
+        current.windows.push({ start: calendarDateKey(enrollment.startDate), end: calendarDateKey(enrollment.endDate) });
       }
       byCourse.set(enrollment.courseId, current);
     }
@@ -141,7 +129,7 @@ export default async function OwnerBillingPage({
       continue;
     }
     for (const [courseId, course] of byCourse) {
-      const period = course.billingType === "PER_PERIOD" ? periodState(course.windows, today) : null;
+      const period = course.billingType === "PER_PERIOD" ? periodValidity(course.windows, today) : null;
       const remainingHours = student.courseHourBalances.find((item) => item.courseId === courseId)?.remainingHours ?? 0;
       const lowHours = remainingHours < lowHourThreshold;
       rows.push({
@@ -154,7 +142,7 @@ export default async function OwnerBillingPage({
         usageStatus: period ? period.status : lowHours ? "课时不足" : "正常",
         lastPaid: course.paidAt ? course.paidAt.toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" }) : "还没有缴费",
         enrolled: true,
-        followUp: period ? period.status === "已过期" : lowHours,
+        followUp: period ? periodNeedsRenewal(period.status) : lowHours,
       });
     }
   }

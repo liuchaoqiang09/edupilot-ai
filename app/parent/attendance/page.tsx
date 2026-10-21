@@ -14,6 +14,7 @@ export default async function ParentAttendancePage() {
         where: {
           organizationId: user.organizationId,
           studentId: { in: links.map((link) => link.studentId) },
+          lessonSession: { status: { not: "CANCELLED" } },
         },
         include: {
           student: { select: { name: true } },
@@ -27,7 +28,7 @@ export default async function ParentAttendancePage() {
   return (
     <section>
       <h1 className="text-[28px] font-semibold tracking-tight">出勤记录</h1>
-      <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">这里只显示已绑定孩子在课次名单里的出勤，状态由授课教师保存。</p>
+      <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">这里只显示已绑定孩子在未取消课次里的出勤，状态由授课教师保存。</p>
       <div className="mt-6 overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
         {rows.length === 0 ? (
           <p className="px-5 py-12 text-center leading-7 text-[var(--muted)]">还没有出勤记录。</p>

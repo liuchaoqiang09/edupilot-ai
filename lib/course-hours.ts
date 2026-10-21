@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import { AttendanceStatus, Prisma, PrismaClient } from "@prisma/client";
+import { shanghaiDateKey } from "@/lib/datetime";
 
 export const lowHourThreshold = 8;
 
@@ -120,16 +121,62 @@ export async function releaseChargedHour(
   return true;
 }
 
+export type PeriodValidity = "有效中" | "已过期" | "未开始" | "未填写有效期";
+
+export function calendarDateKey(value: Date) {
+  return value.toISOString().slice(0, 10);
+}
+
+export function periodValidity(windows: { start: string; end: string }[], today: string): { end: string; status: PeriodValidity } {
+  if (windows.length === 0) return { end: "—", status: "未填写有效期" };
+  const active = windows.filter((window) => window.start <= today && today <= window.end).sort((left, right) => right.end.localeCompare(left.end))[0];
+  if (active) return { end: active.end, status: "有效中" };
+  const latest = [...windows].sort((left, right) => right.end.localeCompare(left.end))[0];
+  return { end: latest.end, status: latest.end < today ? "已过期" : "未开始" };
+}
+
+export function periodNeedsRenewal(status: PeriodValidity) {
+  return status === "已过期" || status === "未填写有效期";
+}
+
 export async function findRenewingStudentIds(db: PrismaClient | Prisma.TransactionClient, organizationId: string) {
-  const balances = await db.courseHourBalance.findMany({
-    where: { organizationId, remainingHours: { lt: lowHourThreshold }, student: { status: "ACTIVE" } },
-    select: { studentId: true, courseId: true },
-  });
-  if (balances.length === 0) return new Set<string>();
-  const enrolled = await db.enrollment.findMany({
-    where: { organizationId, OR: balances.map((row) => ({ studentId: row.studentId, courseId: row.courseId })) },
-    select: { studentId: true, courseId: true },
-  });
-  const lowPairs = new Set(balances.map((row) => `${row.studentId}:${row.courseId}`));
-  return new Set(enrolled.filter((row) => lowPairs.has(`${row.studentId}:${row.courseId}`)).map((row) => row.studentId));
+  const today = shanghaiDateKey();
+  const [lessonEnrollments, balances, periodEnrollments] = await Promise.all([
+    db.enrollment.findMany({
+      where: { organizationId, student: { status: "ACTIVE" }, course: { billingType: "PER_LESSON" } },
+      select: { studentId: true, courseId: true },
+    }),
+    db.courseHourBalance.findMany({
+      where: { organizationId, course: { billingType: "PER_LESSON" } },
+      select: { studentId: true, courseId: true, remainingHours: true },
+    }),
+    db.enrollment.findMany({
+      where: { organizationId, student: { status: "ACTIVE" }, course: { billingType: "PER_PERIOD" } },
+      select: { studentId: true, courseId: true, startDate: true, endDate: true },
+    }),
+  ]);
+
+  const ids = new Set<string>();
+  const remaining = new Map(balances.map((row) => [`${row.studentId}:${row.courseId}`, row.remainingHours]));
+  const seenLessons = new Set<string>();
+  for (const row of lessonEnrollments) {
+    const key = `${row.studentId}:${row.courseId}`;
+    if (seenLessons.has(key)) continue;
+    seenLessons.add(key);
+    if ((remaining.get(key) ?? 0) < lowHourThreshold) ids.add(row.studentId);
+  }
+
+  const windows = new Map<string, { studentId: string; ranges: { start: string; end: string }[] }>();
+  for (const row of periodEnrollments) {
+    const key = `${row.studentId}:${row.courseId}`;
+    const current = windows.get(key) ?? { studentId: row.studentId, ranges: [] };
+    if (row.startDate && row.endDate) {
+      current.ranges.push({ start: calendarDateKey(row.startDate), end: calendarDateKey(row.endDate) });
+    }
+    windows.set(key, current);
+  }
+  for (const item of windows.values()) {
+    if (periodNeedsRenewal(periodValidity(item.ranges, today).status)) ids.add(item.studentId);
+  }
+  return ids;
 }

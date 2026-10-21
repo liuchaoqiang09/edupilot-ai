@@ -81,7 +81,7 @@ export async function seedDemoOrganization(prisma) {
   });
 
   const wang = await prisma.teacher.create({
-    data: { organizationId: organization.id, name: "王老师", contact: "数学", userId: teacherUser.id, createdAt: onDay(shiftKey(today, -40), 9, 0) },
+    data: { organizationId: organization.id, name: "王老师", contact: "数学", userId: teacherUser.id, accountUserId: teacherUser.id, createdAt: onDay(shiftKey(today, -40), 9, 0) },
   });
   const zhao = await prisma.teacher.create({
     data: { organizationId: organization.id, name: "赵老师", contact: "数学，周末兼带美术", createdAt: onDay(shiftKey(today, -38), 9, 0) },

@@ -3,8 +3,8 @@
 import { useState, useTransition } from "react";
 import { issueParentInvite, issueTeacherInvite } from "@/app/owner/membership/actions";
 
-export function TeacherInviteButton() {
-  return <InviteButton label="生成教师邀请码" action={() => issueTeacherInvite()} />;
+export function TeacherInviteButton({ teacherId }: { teacherId?: string }) {
+  return <InviteButton label="生成教师邀请码" action={() => issueTeacherInvite(teacherId)} />;
 }
 
 export function ParentInviteButton({ studentId }: { studentId: string }) {

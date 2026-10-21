@@ -68,6 +68,24 @@ export async function updateCourse(formData: FormData): Promise<ActionResult> {
   if (!billingType) fieldErrors.billingType = "请选择计费模式。";
   if (!billingType || Object.keys(fieldErrors).length > 0) return { ok: false, fieldErrors };
 
+  const existing = await prisma.course.findFirst({
+    where: { id, organizationId: user.organizationId },
+    select: { billingType: true },
+  });
+  if (!existing) return { ok: false, message: "找不到这门课程，或你无权修改。" };
+  if (existing.billingType !== billingType) {
+    const [enrollments, balances, charged] = await Promise.all([
+      prisma.enrollment.count({ where: { courseId: id, organizationId: user.organizationId } }),
+      prisma.courseHourBalance.count({ where: { courseId: id, organizationId: user.organizationId } }),
+      prisma.lessonStudent.count({
+        where: { organizationId: user.organizationId, hoursCharged: true, lessonSession: { courseId: id, organizationId: user.organizationId } },
+      }),
+    ]);
+    if (enrollments + balances + charged > 0) {
+      return { ok: false, fieldErrors: { billingType: "这门课已有报名或课时记录，不能更改计费模式。" } };
+    }
+  }
+
   const updated = await prisma.course.updateMany({
     where: { id, organizationId: user.organizationId },
     data: {

@@ -143,6 +143,7 @@ export function ScheduleBoard({
       }
       setCancelling(null);
       setViewing(null);
+      setWarning(result.message ?? "课次已取消。");
       router.refresh();
     });
   }
@@ -349,7 +350,7 @@ export function ScheduleBoard({
       {cancelling ? (
         <Modal title="取消课次" onClose={() => setCancelling(null)}>
           <div className="px-5 py-5 text-sm leading-7 text-[var(--muted)]">
-            取消后「{cancelling.title}」仍会留在课表里，学生名单和已有考勤不会删除。
+            取消后「{cancelling.title}」仍会留在课表里。学生名单和考勤记录保留，已经扣掉的课时会退回。
             {message ? <p className="mt-3 text-xs text-[#b94d4d]">{message}</p> : null}
             <div className="mt-5 flex justify-end gap-2">
               <button type="button" onClick={() => setCancelling(null)} className="rounded-[10px] border border-[var(--line)] px-3.5 py-2.5 text-xs font-bold">返回</button>

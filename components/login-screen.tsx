@@ -26,6 +26,11 @@ export function LoginScreen() {
   const [notice, setNotice] = useState("");
   const [devCode, setDevCode] = useState("");
   const [pending, setPending] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [resetPhone, setResetPhone] = useState("");
+  const [resetCode, setResetCode] = useState("");
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetConfirm, setResetConfirm] = useState("");
   const [sending, setSending] = useState(false);
   const [retryUntil, setRetryUntil] = useState(0);
   const [secondsLeft, setSecondsLeft] = useState(0);
@@ -165,6 +170,66 @@ export function LoginScreen() {
     }
   }
 
+  async function sendResetCode() {
+    setError("");
+    setNotice("");
+    setDevCode("");
+    if (!/^1[3-9]\d{9}$/.test(resetPhone.trim())) {
+      setError("请输入中国大陆手机号。");
+      return;
+    }
+    setSending(true);
+    try {
+      const response = await fetch("/api/auth/phone/send", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ phone: resetPhone }),
+      });
+      const data = (await response.json().catch(() => null)) as { message?: string; devCode?: string; retryAfterSeconds?: number } | null;
+      if (!response.ok) {
+        setError(data?.message || "验证码发送失败，请稍后重试。");
+        return;
+      }
+      setNotice(data?.message || "验证码已发送。");
+      setDevCode(data?.devCode || "");
+      setRetryUntil(Date.now() + (data?.retryAfterSeconds ?? 60) * 1000);
+    } catch {
+      setError("网络异常，请稍后重试。");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function submitPasswordReset(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    if (resetPassword !== resetConfirm) {
+      setError("两次输入的新密码不一致。");
+      return;
+    }
+    setPending(true);
+    try {
+      const response = await fetch("/api/auth/password/reset", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ phone: resetPhone, code: resetCode, password: resetPassword, confirm: resetConfirm }),
+      });
+      const data = (await response.json().catch(() => null)) as { message?: string } | null;
+      if (!response.ok) {
+        setError(data?.message || "密码没有重置。");
+        return;
+      }
+      setResetting(false);
+      setPassword("");
+      setNotice(data?.message || "密码已重置。请用新密码登录。");
+    } catch {
+      setError("网络异常，请稍后重试。");
+    } finally {
+      setPending(false);
+    }
+  }
+
   async function passwordLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
@@ -289,7 +354,37 @@ export function LoginScreen() {
             </div>
           ) : null}
 
-          {true ? (
+          {resetting ? (
+            <form onSubmit={submitPasswordReset} className="mt-6 grid gap-3.5">
+              <p className="text-sm leading-6 text-[var(--muted)]">用已绑定的手机号收取验证码，然后设置新密码。账号本身不会改变。</p>
+              <label className="grid gap-1.5 text-xs font-bold">
+                手机号 <span className="font-medium text-[#9a6729]">必填</span>
+                <span className="flex gap-2">
+                  <input value={resetPhone} onChange={(event) => setResetPhone(event.target.value)} inputMode="numeric" autoComplete="tel" placeholder="请输入绑定的手机号" className={fieldClass} />
+                  <button type="button" disabled={sending || secondsLeft > 0} onClick={sendResetCode} className="shrink-0 rounded-[10px] bg-[var(--lime)] px-3 text-xs font-bold text-[var(--navy)] disabled:cursor-not-allowed disabled:opacity-60">
+                    {sending ? "正在发送…" : secondsLeft > 0 ? `${secondsLeft}s` : "获取验证码"}
+                  </button>
+                </span>
+              </label>
+              <label className="grid gap-1.5 text-xs font-bold">
+                验证码 <span className="font-medium text-[#9a6729]">必填</span>
+                <input value={resetCode} onChange={(event) => setResetCode(event.target.value)} inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="6 位数字" className={fieldClass} />
+              </label>
+              <label className="grid gap-1.5 text-xs font-bold">
+                新密码 <span className="font-medium text-[#9a6729]">必填</span>
+                <input value={resetPassword} onChange={(event) => setResetPassword(event.target.value)} type="password" autoComplete="new-password" placeholder="8 到 64 位" className={fieldClass} />
+              </label>
+              <label className="grid gap-1.5 text-xs font-bold">
+                再次输入新密码 <span className="font-medium text-[#9a6729]">必填</span>
+                <input value={resetConfirm} onChange={(event) => setResetConfirm(event.target.value)} type="password" autoComplete="new-password" placeholder="再输入一次" className={fieldClass} />
+              </label>
+              {error ? <div className="rounded-[9px] bg-[#fff0ed] px-2.5 py-2.5 text-xs text-[#b94d4d]">{error}</div> : null}
+              {notice ? <div className="rounded-[9px] bg-[#edf2ed] px-2.5 py-2.5 text-xs text-[#5e706b]">{notice}</div> : null}
+              {devCode ? <div className="rounded-[9px] bg-[var(--lime)] px-2.5 py-2.5 text-xs font-bold text-[var(--navy)]">开发环境验证码：{devCode}</div> : null}
+              <button type="submit" disabled={pending} className="rounded-[10px] bg-[var(--navy)] px-4 py-3 text-sm font-bold text-white disabled:opacity-60">{pending ? "正在重置…" : "重置密码"}</button>
+              <button type="button" onClick={() => { setResetting(false); setError(""); setNotice(""); }} className="bg-transparent text-xs font-bold text-[var(--teal)]">返回登录</button>
+            </form>
+          ) : (
             <form onSubmit={passwordLogin} className="mt-6 grid gap-3.5">
               <p className="rounded-[10px] bg-[var(--lime)] px-3 py-2.5 text-xs font-bold leading-5 text-[var(--navy)]">短信登录即将上线。内测请使用下方账号密码登录。</p>
               <label className="grid gap-1.5 text-xs font-bold">
@@ -310,7 +405,7 @@ export function LoginScreen() {
                   <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} />
                   记住我
                 </label>
-                <span className="text-xs text-[var(--muted)]">修改密码即将上线</span>
+                <button type="button" onClick={() => { setResetting(true); setError(""); setNotice(""); }} className="bg-transparent font-bold text-[var(--teal)]">忘记密码</button>
               </div>
               {error ? <div className="rounded-[9px] bg-[#fff0ed] px-2.5 py-2.5 text-xs text-[#b94d4d]">{error}</div> : null}
               {notice ? <div className="rounded-[9px] bg-[#edf2ed] px-2.5 py-2.5 text-xs text-[#5e706b]">{notice}</div> : null}
@@ -330,7 +425,7 @@ export function LoginScreen() {
                 ))}
               </div>
             </form>
-          ) : null}
+          )}
         </div>
       </section>
     </div>

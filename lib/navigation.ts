@@ -30,19 +30,21 @@ export const navigation: Record<WorkspaceArea, NavItem[]> = {
     { href: "/owner/billing", label: "报名与课时", icon: "¥", description: "记录报名、实收金额和剩余课时。出勤后会扣减课时。" },
     { href: "/owner/stats", label: "基础统计", icon: "▤", description: "查看出勤、课次和报告完成情况。数字只来自数据库。" },
     { href: "/owner/settings", label: "机构设置", icon: "⚙", description: "维护机构名称和报告偏好。可以以后再补全。" },
+    { href: "/owner/account", label: "账号管理", icon: "☺", description: "查看自己的登录账号并修改自己的密码。不能修改老师或家长的密码。" },
   ],
   teacher: [
     { href: "/teacher", label: "我的课表", icon: "▤", description: "只显示分配给当前教师的课次。" },
     { href: "/teacher/students", label: "我的学生", icon: "♙", description: "只显示本人授课范围内的学生。" },
     { href: "/teacher/records", label: "教学记录", icon: "✎", description: "记录本节课的内容、表现、问题和作业。" },
     { href: "/teacher/reports", label: "教学报告", icon: "✳", description: "编辑 AI 草稿，确认后再发布给家长。" },
+    { href: "/teacher/account", label: "账号管理", icon: "☺", description: "查看自己的登录账号并修改自己的密码。" },
   ],
   parent: [
     { href: "/parent", label: "孩子概览", icon: "♧", description: "查看已绑定孩子的近期学习情况。" },
     { href: "/parent/schedule", label: "课程安排", icon: "▣", description: "查看已绑定孩子的课程安排。" },
     { href: "/parent/attendance", label: "出勤记录", icon: "✓", description: "查看已绑定孩子的出勤情况。" },
     { href: "/parent/reports", label: "教学报告", icon: "✳", description: "只显示教师确认并发布的报告。" },
-    { href: "/parent/account", label: "账号 / 绑定信息", icon: "♡", description: "查看当前账号和孩子绑定关系。绑定由机构负责人管理。" },
+    { href: "/parent/account", label: "账号管理", icon: "♡", description: "查看自己的登录账号、修改自己的密码，并查看已绑定的孩子。" },
   ],
 };
 

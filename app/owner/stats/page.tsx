@@ -10,9 +10,9 @@ export default async function OwnerStatsPage() {
     ["已停用学生", data.inactiveStudents],
     ["在职教师", data.activeTeachers],
     ["今日课次", data.todayLessons],
-    ["近 7 天课次", data.upcomingLessons],
+    ["今天起 7 天课次", data.upcomingLessons],
     ["待填写教学记录", data.pendingRecords],
-    ["待发布报告", data.pendingReports],
+    ["待确认报告", data.pendingReports],
   ] as const;
 
   return (

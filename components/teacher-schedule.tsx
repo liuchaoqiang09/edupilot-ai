@@ -91,10 +91,10 @@ export function TeacherSchedule({
                   {lesson.startLabel}
                   <small className="mt-1 block font-medium text-[var(--muted)]">{lesson.endLabel}</small>
                 </div>
-                <div className="h-10 w-1 rounded bg-[#91c8b5]" />
+                <div className={`h-10 w-1 rounded ${lesson.status === "CANCELLED" ? "bg-[#e7c2c2]" : "bg-[#91c8b5]"}`} />
                 <div>
                   <div className="text-xs font-bold">{lesson.title}</div>
-                  <div className="mt-1 text-[11px] text-[var(--muted)]">{lesson.students.length} 人 · {lesson.location ?? "地点待定"}</div>
+                  <div className="mt-1 text-[11px] text-[var(--muted)]">{lesson.students.length} 人 · {lesson.location ?? "地点待定"}{lesson.status === "CANCELLED" ? ` · ${lessonStatusLabel.CANCELLED}` : ""}</div>
                 </div>
                 <button type="button" onClick={() => { setMarking(lesson); setMessage(""); }} className="text-xs font-bold text-[var(--teal)]">
                   {lesson.status === "CANCELLED" ? "查看" : "记录考勤"}

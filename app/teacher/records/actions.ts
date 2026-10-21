@@ -123,7 +123,8 @@ export async function publishReport(reportId: string): Promise<ActionResult> {
     { id: user.id, organizationId: user.organizationId, teacherId: teacher.id },
     reportId,
   );
-  if (!result.ok || !("published" in result)) return result;
+  if (!result.ok) return result;
   refresh();
-  return { ok: true };
+  if (!("published" in result)) return result;
+  return { ok: true, message: "报告已发布，家长现在可以查看。" };
 }
