@@ -9,6 +9,7 @@ export type CurrentUser = {
   id: string;
   name: string;
   email: string;
+  phone: string | null;
   roles: Role[];
   organizationId: string;
   organizationName: string;
@@ -30,15 +31,20 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     id: user.id,
     name: user.name,
     email: user.email,
+    phone: user.phone,
     roles: user.roles,
     organizationId: user.organizationId,
     organizationName: user.organization.name,
   };
 }
 
+export function redirectToLogin(): never {
+  redirect("/api/auth/session");
+}
+
 export async function requireRole(role: Role, area: WorkspaceArea): Promise<CurrentUser> {
   const user = await getCurrentUser();
-  if (!user) redirect("/login");
+  if (!user) redirectToLogin();
   if (!user.roles.includes(role)) redirect(`/forbidden?from=${area}`);
   return user;
 }

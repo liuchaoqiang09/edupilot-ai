@@ -1,9 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { writeAudit } from "@/lib/audit";
 import { requireRole } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { publishReportByTeacher } from "@/lib/report-flow";
 
 export type ActionResult = { ok: boolean; message?: string };
 
@@ -118,41 +118,12 @@ export async function publishReport(reportId: string): Promise<ActionResult> {
   });
   if (!teacher) return { ok: false, message: "当前账号还没有关联在职教师档案。" };
 
-  const report = await prisma.teachingReport.findFirst({
-    where: {
-      id: reportId,
-      organizationId: user.organizationId,
-      status: { in: ["DRAFT", "CONFIRMED", "RETURNED"] },
-      lessonSession: { teacherId: teacher.id },
-    },
-    select: { id: true, summary: true, strengths: true, issues: true, nextSteps: true },
-  });
-  if (!report) return { ok: false, message: "这份报告不能发布，或你无权操作。" };
-  if (!report.summary || !report.strengths || !report.issues || !report.nextSteps) {
-    return { ok: false, message: "概述、表现、问题和建议都需要填写后才能发布。" };
-  }
-
-  const now = new Date();
-  const updated = await prisma.teachingReport.updateMany({
-    where: { id: report.id, organizationId: user.organizationId, status: { in: ["DRAFT", "CONFIRMED", "RETURNED"] } },
-    data: {
-      status: "PUBLISHED",
-      confirmedById: user.id,
-      confirmedAt: now,
-      publishedById: user.id,
-      publishedAt: now,
-      revision: { increment: 1 },
-    },
-  });
-  if (updated.count !== 1) return { ok: false, message: "发布没有完成，请刷新后再试。" };
-  await writeAudit(prisma, {
-    organizationId: user.organizationId,
-    actorId: user.id,
-    action: "REPORT_PUBLISHED",
-    targetType: "TeachingReport",
-    targetId: report.id,
-    detail: "教师发布报告",
-  });
+  const result = await publishReportByTeacher(
+    prisma,
+    { id: user.id, organizationId: user.organizationId, teacherId: teacher.id },
+    reportId,
+  );
+  if (!result.ok || !("published" in result)) return result;
   refresh();
   return { ok: true };
 }

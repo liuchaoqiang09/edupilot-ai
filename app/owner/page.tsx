@@ -48,7 +48,7 @@ export default async function OwnerHomePage() {
       <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard icon="♙" label="在读学员" value={data.activeStudents} foot={data.newStudents > 0 ? `本月新增 ${data.newStudents}` : "本月还没有新增学员"} up={data.newStudents > 0} />
         <StatCard icon="▦" label="今日课程" value={data.lessons.length} foot={`已排课 ${data.lessons.length} 节 · ${data.missingRecords} 节待记录`} />
-        <StatCard icon="¥" label="待续费学员" value={data.renewingCount} foot={data.renewingCount === 0 ? "已报名且剩余课时少于 8 节的学员才会出现在这里" : "剩余课时少于 8 节"} />
+        <StatCard icon="¥" label="待续费学员" value={data.renewingCount} foot={data.renewingCount === 0 ? "已报名课程的剩余课时都不少于 8 节" : "某一门已报名课程剩余课时少于 8 节"} />
         <StatCard icon="✳" label="待确认报告" value={data.pendingReports} foot={data.pendingReports === 0 ? "目前没有等待确认的报告" : "草稿、已确认或已退回，家长还看不到"} />
       </div>
 
@@ -111,7 +111,7 @@ export default async function OwnerHomePage() {
           </div>
           <ul className="px-5">
             <Todo icon="✳" title="AI 教学报告待确认" body={reportHint} count={data.pendingReports} href="/owner/reports" action="去查看 →" />
-            <Todo icon="¥" title="学员续费跟进" body={data.renewingCount === 0 ? "目前没有剩余课时少于 8 节的已报名学员。" : `有 ${data.renewingCount} 位学员剩余课时少于 8 节。`} count={data.renewingCount} href="/owner/billing" action="去跟进 →" green />
+            <Todo icon="¥" title="学员续费跟进" body={data.renewingCount === 0 ? "目前没有哪一门已报名课程的剩余课时少于 8 节。" : `有 ${data.renewingCount} 位学员的某一门课程剩余课时少于 8 节。`} count={data.renewingCount} href="/owner/billing" action="去跟进 →" green />
             <Todo icon="▣" title="教学记录完成情况" body={data.lessons.length === 0 ? "今天没有需要填写的课次。" : data.missingRecords === 0 ? "今天的课次都已经有课堂记录。" : `今天仍有 ${data.missingRecords} 节课未提交课堂记录。`} count={data.missingRecords} href="/owner/schedule" action="查看进度 →" />
           </ul>
         </section>

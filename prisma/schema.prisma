@@ -74,6 +74,13 @@ enum EnrollmentStatus {
   @@schema("edupilot")
 }
 
+enum BillingType {
+  PER_LESSON
+  PER_PERIOD
+
+  @@schema("edupilot")
+}
+
 /// 机构是租户边界。主键即租户标识，业务数据通过 organizationId 指向这里。
 model Organization {
   id                     String           @id @default(cuid())
@@ -99,16 +106,19 @@ model Organization {
   teachingReports    TeachingReport[]
   enrollments        Enrollment[]
   auditLogs          AuditLog[]
+  courseHourBalances CourseHourBalance[]
+  membershipInvites  MembershipInvite[]
 
   @@schema("edupilot")
 }
 
-/// 登录身份。同一邮箱全局唯一；所属机构用 organizationId 隔离。
+/// 登录身份。邮箱仍可用于密码登录；手机号可空，同一个手机号只能对应一个账号。
 model User {
   id             String       @id @default(cuid())
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
   email          String       @unique
+  phone          String?      @unique
   passwordHash   String
   name           String
   roles          Role[]
@@ -121,6 +131,7 @@ model User {
   publishedReports   TeachingReport[] @relation("ReportPublishedBy")
   createdEnrollments Enrollment[]
   auditLogs          AuditLog[]
+  membershipInvites  MembershipInvite[]
 
   @@index([organizationId])
   @@schema("edupilot")
@@ -136,6 +147,7 @@ model Student {
   grade          String?
   contactNote    String?
   status         MemberStatus       @default(ACTIVE)
+  /// 旧的学员总课时。新的扣课以 CourseHourBalance 为准，不再读写这个字段。
   remainingHours Int                @default(0)
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
@@ -143,6 +155,8 @@ model Student {
   lessonStudents LessonStudent[]
   teachingReports TeachingReport[]
   enrollments    Enrollment[]
+  courseHourBalances CourseHourBalance[]
+  membershipInvites MembershipInvite[]
 
   @@unique([organizationId, studentNo])
   @@index([organizationId])
@@ -177,12 +191,14 @@ model Course {
   name           String
   category       CourseCategory?
   description    String?
+  billingType    BillingType     @default(PER_LESSON)
   status         ArchiveStatus   @default(ACTIVE)
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   classGroups    ClassGroup[]
   enrollments    Enrollment[]
   lessonSessions LessonSession[]
+  courseHourBalances CourseHourBalance[]
 
   @@index([organizationId])
   @@schema("edupilot")
@@ -263,7 +279,25 @@ model LessonStudent {
   @@schema("edupilot")
 }
 
-/// 一次报名或缴费。保存后把购买课时加到学员剩余课时。
+/// 某一学员在某一课程上的可用课时。同一学员的不同课程分开记账。
+model CourseHourBalance {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  studentId      String
+  student        Student      @relation(fields: [studentId], references: [id])
+  courseId       String
+  course         Course       @relation(fields: [courseId], references: [id])
+  remainingHours Int
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([studentId, courseId])
+  @@index([organizationId])
+  @@schema("edupilot")
+}
+
+/// 一次报名或缴费。购买课时加到对应课程的可用课时，不并入其他课程。
 model Enrollment {
   id             String           @id @default(cuid())
   organizationId String
@@ -276,6 +310,9 @@ model Enrollment {
   amount         Decimal          @db.Decimal(10, 2)
   hoursAdded     Int
   status         EnrollmentStatus
+  /// 按周期报名的有效期。按课时报名时留空。
+  startDate      DateTime?        @db.Date
+  endDate        DateTime?        @db.Date
   paidAt         DateTime?
   createdById    String
   createdBy      User             @relation(fields: [createdById], references: [id])
@@ -380,5 +417,50 @@ model AuditLog {
 
   @@index([organizationId, createdAt])
   @@index([actorId])
+  @@schema("edupilot")
+}
+
+/// 手机验证码或注册票据。只保存哈希，用过后立即失效。
+model PhoneVerification {
+  id          String    @id @default(cuid())
+  phone       String
+  purpose     String
+  codeHash    String
+  expiresAt   DateTime
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5)
+  consumedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([phone, createdAt])
+  @@schema("edupilot")
+}
+
+/// 负责人签发的一次性加入凭证。角色和机构以这条记录为准，不接受调用方指定。
+model MembershipInvite {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  kind           String
+  codeHash       String       @unique
+  studentId      String?
+  student        Student?     @relation(fields: [studentId], references: [id])
+  createdById    String
+  createdBy      User         @relation(fields: [createdById], references: [id])
+  expiresAt      DateTime
+  consumedAt     DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+  @@schema("edupilot")
+}
+
+/// 已验证但尚未分配机构角色的手机号。不创建工作台权限。
+model PhoneSignup {
+  id        String   @id @default(cuid())
+  phone     String   @unique
+  name      String
+  createdAt DateTime @default(now())
+
   @@schema("edupilot")
 }

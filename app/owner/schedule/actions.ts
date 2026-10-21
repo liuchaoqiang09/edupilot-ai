@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { writeAudit } from "@/lib/audit";
+import { CourseHourError, releaseChargedHour } from "@/lib/course-hours";
 import { requireRole } from "@/lib/auth";
 import { formatDateTime, parseShanghaiDateTime } from "@/lib/datetime";
 import { prisma } from "@/lib/prisma";
@@ -167,27 +168,35 @@ export async function removeLessonStudent(lessonId: string, studentId: string): 
   const user = await requireRole("OWNER", "owner");
   const row = await prisma.lessonStudent.findFirst({
     where: { lessonSessionId: lessonId, studentId, organizationId: user.organizationId, lessonSession: { status: { not: "CANCELLED" } } },
-    select: { id: true, hoursCharged: true },
+    select: { id: true, lessonSession: { select: { courseId: true } } },
   });
   if (!row) return { ok: false, message: "名单里没有这名学生，或这节课已经取消。" };
 
-  await prisma.$transaction(async (tx) => {
-    if (row.hoursCharged) {
-      await tx.student.updateMany({
-        where: { id: studentId, organizationId: user.organizationId },
-        data: { remainingHours: { increment: 1 } },
+  try {
+    await prisma.$transaction(async (tx) => {
+      const refunded = await releaseChargedHour(tx, {
+        organizationId: user.organizationId,
+        lessonStudentId: row.id,
+        studentId,
+        courseId: row.lessonSession.courseId,
       });
-    }
-    await tx.lessonStudent.delete({ where: { id: row.id } });
-    await writeAudit(tx, {
-      organizationId: user.organizationId,
-      actorId: user.id,
-      action: "ROSTER_REMOVED",
-      targetType: "LessonStudent",
-      targetId: row.id,
-      detail: row.hoursCharged ? "移出课次名单，并退回 1 课时" : "移出课次名单",
+      const deleted = await tx.lessonStudent.deleteMany({
+        where: { id: row.id, organizationId: user.organizationId, lessonSessionId: lessonId },
+      });
+      if (deleted.count !== 1) throw new CourseHourError("名单里没有这名学生，或这节课已经取消。");
+      await writeAudit(tx, {
+        organizationId: user.organizationId,
+        actorId: user.id,
+        action: "ROSTER_REMOVED",
+        targetType: "LessonStudent",
+        targetId: row.id,
+        detail: refunded ? "移出课次名单，并退回该课程 1 课时" : "移出课次名单",
+      });
     });
-  });
+  } catch (error) {
+    if (error instanceof CourseHourError) return { ok: false, message: error.message };
+    throw error;
+  }
 
   refresh();
   return { ok: true };

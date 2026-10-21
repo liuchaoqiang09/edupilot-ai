@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { FormEvent, useMemo, useState, useTransition } from "react";
-import { publishReport, returnReport } from "@/app/owner/reports/actions";
+import { returnReport } from "@/app/owner/reports/actions";
 import { Modal } from "@/components/modal";
 import { reportStatusLabel, type ReportStatusValue } from "@/lib/report-labels";
 
@@ -58,7 +58,6 @@ export function OwnerReports({
     [reports, filter],
   );
   const selected = visible.find((report) => report.id === selectedId) ?? visible[0] ?? null;
-  const canPublish = selected ? selected.status !== "PUBLISHED" && Boolean(selected.summary && selected.issues && selected.nextSteps) : false;
 
   function refresh() {
     router.refresh();
@@ -80,20 +79,10 @@ export function OwnerReports({
     });
   }
 
-  function publish() {
-    if (!selected) return;
-    setMessage("");
-    startTransition(async () => {
-      const result = await publishReport(selected.id);
-      setMessage(result.ok ? "" : result.message ?? "发布失败。");
-      if (result.ok) refresh();
-    });
-  }
-
   return (
     <section>
       <h1 className="text-[28px] font-semibold tracking-tight">AI 教学报告</h1>
-      <p className="mt-2 max-w-3xl leading-7 text-[var(--muted)]">查看教师提交的报告。常规报告由教师确认，负责人可以抽查、退回或发布。</p>
+      <p className="mt-2 max-w-3xl leading-7 text-[var(--muted)]">查看本机构的教学报告。负责人可以退回并填写原因，发布由授课教师完成。</p>
       <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Stat label="本周已生成" value={counts.generatedThisWeek} hint="按生成时间统计" />
         <Stat label="待教师确认" value={counts.pending} hint="草稿和已确认、尚未发布" />
@@ -167,11 +156,6 @@ export function OwnerReports({
                 <div className="mt-4 flex flex-wrap gap-2">
                   {selected.status !== "RETURNED" ? (
                     <button type="button" onClick={() => { setReturning(true); setMessage(""); }} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold">退回修改</button>
-                  ) : null}
-                  {selected.status !== "PUBLISHED" ? (
-                    <button type="button" disabled={pending || !canPublish} onClick={publish} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white disabled:opacity-60">
-                      {pending ? "正在发布…" : "确认发布"}
-                    </button>
                   ) : null}
                 </div>
               </div>

@@ -4,7 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState, useTransition } from "react";
 import { FieldError, TextField } from "@/components/form-fields";
+import { TeacherInviteButton } from "@/components/invite-button";
 import { Modal } from "@/components/modal";
+import { SortHeader } from "@/components/sort-header";
+import type { SortOrder } from "@/lib/table-sort";
 import { createTeacher, setTeacherStatus, updateTeacher, type FieldErrors } from "@/app/owner/teachers/actions";
 
 export type AccountOption = { id: string; name: string; email: string };
@@ -23,11 +26,15 @@ export function TeacherDirectory({
   accounts,
   links,
   query,
+  sortBy,
+  order,
 }: {
   teachers: TeacherRow[];
   accounts: AccountOption[];
   links: { teacherId: string; userId: string }[];
   query: string;
+  sortBy: "name" | "contact" | null;
+  order: SortOrder | null;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -79,15 +86,24 @@ export function TeacherDirectory({
           <h1 className="text-[28px] font-semibold tracking-tight">教师管理</h1>
           <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">可以先建立教师档案，之后再关联登录账号。停用不会删除档案。</p>
         </div>
-        <button type="button" onClick={() => { setEditing("new"); setFieldErrors({}); setMessage(""); }} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white">
-          ＋ 新增教师
-        </button>
+        <div className="flex flex-wrap items-start gap-2">
+          <TeacherInviteButton />
+          <button type="button" onClick={() => { setEditing("new"); setFieldErrors({}); setMessage(""); }} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white">
+            ＋ 新增教师
+          </button>
+        </div>
       </div>
 
       <form action="/owner/teachers" className="mt-6 flex flex-wrap gap-2">
+        {sortBy && order ? (
+          <>
+            <input type="hidden" name="sortBy" value={sortBy} />
+            <input type="hidden" name="order" value={order} />
+          </>
+        ) : null}
         <input name="q" defaultValue={query} placeholder="搜索教师姓名" className="w-full rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm outline-none focus:border-[var(--teal)] sm:w-auto sm:min-w-[220px] sm:flex-1" />
         <button className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold text-[#385058]">搜索</button>
-        {query ? <Link href="/owner/teachers" className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold text-[#385058]">重置</Link> : null}
+        {query ? <Link href={sortBy && order ? `/owner/teachers?sortBy=${sortBy}&order=${order}` : "/owner/teachers"} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold text-[#385058]">重置</Link> : null}
       </form>
       {message ? <p className="mt-3 text-sm text-[#b94d4d]">{message}</p> : null}
 
@@ -96,8 +112,8 @@ export function TeacherDirectory({
           <table className="w-full min-w-[760px] border-collapse text-left text-xs">
             <thead className="bg-[#fafbf9] text-[10px] tracking-wide text-[#84918e]">
               <tr>
-                <th className="px-4 py-3 font-extrabold">教师</th>
-                <th className="px-4 py-3 font-extrabold">联系方式</th>
+                <SortHeader label="教师" field="name" sortBy={sortBy} order={order} pathname="/owner/teachers" query={query} />
+                <SortHeader label="联系方式" field="contact" sortBy={sortBy} order={order} pathname="/owner/teachers" query={query} />
                 <th className="px-4 py-3 font-extrabold">登录账号</th>
                 <th className="px-4 py-3 font-extrabold">状态</th>
                 <th className="px-4 py-3 font-extrabold">操作</th>

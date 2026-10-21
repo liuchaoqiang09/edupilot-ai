@@ -1,35 +1,11 @@
 import { requireRole } from "@/lib/auth";
 import { formatClock, formatDateLabel, shanghaiDateKey } from "@/lib/datetime";
 import { prisma } from "@/lib/prisma";
+import { reportsVisibleToParent } from "@/lib/report-flow";
 
 export default async function ParentReportsPage() {
   const user = await requireRole("PARENT", "parent");
-  const links = await prisma.parentStudentLink.findMany({
-    where: { organizationId: user.organizationId, parentUserId: user.id },
-    select: { studentId: true },
-  });
-  const reports = links.length
-    ? await prisma.teachingReport.findMany({
-        where: {
-          organizationId: user.organizationId,
-          status: "PUBLISHED",
-          studentId: { in: links.map((link) => link.studentId) },
-        },
-        select: {
-          id: true,
-          summary: true,
-          strengths: true,
-          issues: true,
-          nextSteps: true,
-          homeworkSummary: true,
-          publishedAt: true,
-          student: { select: { name: true } },
-          lessonSession: { select: { title: true, startAt: true, teacher: { select: { name: true } } } },
-        },
-        orderBy: { publishedAt: "desc" },
-        take: 30,
-      })
-    : [];
+  const reports = await reportsVisibleToParent(prisma, { id: user.id, organizationId: user.organizationId });
 
   return (
     <section>

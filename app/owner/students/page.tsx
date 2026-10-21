@@ -1,15 +1,23 @@
+import type { Prisma } from "@prisma/client";
 import { StudentDirectory } from "@/components/student-directory";
 import { requireRole } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { readSort } from "@/lib/table-sort";
+
+const studentSortFields = ["name", "studentNo"] as const;
 
 export default async function StudentsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string }>;
+  searchParams: Promise<{ q?: string; sortBy?: string | string[]; order?: string | string[] }>;
 }) {
   const user = await requireRole("OWNER", "owner");
   const params = await searchParams;
   const query = params.q?.trim() ?? "";
+  const sort = readSort(params.sortBy, params.order, studentSortFields);
+  const orderBy: Prisma.StudentOrderByWithRelationInput[] = sort
+    ? [{ [sort.sortBy]: sort.order }, { createdAt: "desc" }]
+    : [{ status: "asc" }, { createdAt: "desc" }];
 
   const [students, parents, links] = await Promise.all([
     prisma.student.findMany({
@@ -24,7 +32,7 @@ export default async function StudentsPage({
             }
           : {}),
       },
-      orderBy: [{ status: "asc" }, { createdAt: "desc" }],
+      orderBy,
     }),
     prisma.user.findMany({
       where: { organizationId: user.organizationId, roles: { has: "PARENT" } },
@@ -41,6 +49,8 @@ export default async function StudentsPage({
   return (
     <StudentDirectory
       query={query}
+      sortBy={sort?.sortBy ?? null}
+      order={sort?.order ?? null}
       parents={parents}
       links={links.map((link) => ({
         id: link.id,

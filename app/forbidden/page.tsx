@@ -1,7 +1,6 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import { LogoutButton } from "@/components/logout-button";
-import { getCurrentUser, workspaceHome } from "@/lib/auth";
+import { getCurrentUser, redirectToLogin, workspaceHome } from "@/lib/auth";
 
 const areaName: Record<string, string> = {
   owner: "负责人工作空间",
@@ -15,7 +14,7 @@ export default async function ForbiddenPage({
   searchParams: Promise<{ from?: string }>;
 }) {
   const user = await getCurrentUser();
-  if (!user) redirect("/login");
+  if (!user) redirectToLogin();
   const params = await searchParams;
   const target = params.from ? areaName[params.from] : "该工作空间";
 

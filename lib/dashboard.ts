@@ -1,3 +1,4 @@
+import { findRenewingStudentIds } from "@/lib/course-hours";
 import { dayRange, shanghaiDateKey, shiftDate } from "@/lib/datetime";
 import { prisma } from "@/lib/prisma";
 import type { AttendanceStatus } from "@prisma/client";
@@ -137,9 +138,7 @@ export async function ownerOverview(organizationId: string) {
       take: 8,
       select: { student: { select: { name: true } } },
     }),
-    prisma.student.count({
-      where: { organizationId, status: "ACTIVE", remainingHours: { lt: 8 }, enrollments: { some: {} } },
-    }),
+    findRenewingStudentIds(prisma, organizationId).then((ids) => ids.size),
   ]);
 
   const lessonCount = lessons.length;

@@ -22,9 +22,14 @@ export default async function TeacherRecordsPage() {
       })
     : [];
   const now = Date.now();
+  const organization = await prisma.organization.findUnique({
+    where: { id: user.organizationId },
+    select: { aiTeacherMustConfirm: true },
+  });
 
   return (
     <TeacherRecords
+      requireTeacherConfirm={organization?.aiTeacherMustConfirm !== false}
       lessons={lessons.map((lesson) => ({
         id: lesson.id,
         title: lesson.title ?? "课次",

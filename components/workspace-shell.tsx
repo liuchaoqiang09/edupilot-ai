@@ -129,6 +129,7 @@ export function WorkspaceShell({
                     ) : null}
                     {!canSwitch && area === "teacher" ? <p className="text-xs leading-6 text-[var(--muted)]">当前教师账号没有负责人权限。</p> : null}
                     {area === "parent" ? <p className="text-xs leading-6 text-[var(--muted)]">家长账号不能切换为负责人或教师。</p> : null}
+                    <p className="rounded-[10px] bg-[#f7f8f4] px-3 py-2.5 text-xs text-[var(--muted)]">绑定手机号即将上线</p>
                     <LogoutButton />
                   </div>
                 </div>

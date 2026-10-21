@@ -1,38 +1,171 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 
 const accounts = [
-  {
-    email: "owner@edupilot.test",
-    title: "机构负责人",
-    detail: "经营概览 · 教务管理 · 教学报告",
-    icon: "⌂",
-  },
-  {
-    email: "teacher@edupilot.test",
-    title: "教师",
-    detail: "我的课表 · 课堂记录 · 教学报告",
-    icon: "✎",
-  },
-  {
-    email: "parent@edupilot.test",
-    title: "家长",
-    detail: "孩子课表 · 出勤 · 已发布学习报告",
-    icon: "♡",
-  },
+  { email: "demo_owner@edupilot.test", title: "机构负责人", detail: "经营概览 · 教务管理 · 教学报告", icon: "⌂" },
+  { email: "demo_teacher@edupilot.test", title: "教师", detail: "我的课表 · 课堂记录 · 教学报告", icon: "✎" },
+  { email: "demo_parent@edupilot.test", title: "家长", detail: "孩子课表 · 出勤 · 已发布学习报告", icon: "♡" },
 ];
 
+const fieldClass = "w-full rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-base font-medium outline-none focus:border-[var(--teal)]";
+
 export function LoginScreen() {
+  const [phone, setPhone] = useState("");
+  const [code, setCode] = useState("");
+  const [name, setName] = useState("");
+  const [ticket, setTicket] = useState("");
+  const [readyToJoin, setReadyToJoin] = useState(false);
+  const [orgName, setOrgName] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [devCode, setDevCode] = useState("");
   const [pending, setPending] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [retryUntil, setRetryUntil] = useState(0);
+  const [secondsLeft, setSecondsLeft] = useState(0);
 
-  async function onSubmit(event: FormEvent<HTMLFormElement>) {
+  useEffect(() => {
+    if (!retryUntil) return;
+    const update = () => setSecondsLeft(Math.max(0, Math.ceil((retryUntil - Date.now()) / 1000)));
+    update();
+    const timer = window.setInterval(update, 250);
+    return () => window.clearInterval(timer);
+  }, [retryUntil]);
+
+  async function sendCode() {
+    setError("");
+    setNotice("");
+    setDevCode("");
+    if (!/^1[3-9]\d{9}$/.test(phone.trim())) {
+      setError("请输入中国大陆手机号。");
+      return;
+    }
+    setSending(true);
+    try {
+      const response = await fetch("/api/auth/phone/send", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ phone }),
+      });
+      const data = (await response.json().catch(() => null)) as { message?: string; devCode?: string; retryAfterSeconds?: number } | null;
+      if (!response.ok) {
+        setError(data?.message || "验证码发送失败，请稍后重试。");
+        return;
+      }
+      setNotice(data?.message || "验证码已发送。");
+      setDevCode(data?.devCode || "");
+      setRetryUntil(Date.now() + (data?.retryAfterSeconds ?? 60) * 1000);
+    } catch {
+      setError("网络异常，请稍后重试。");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  async function verifyCode(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    if (!/^1[3-9]\d{9}$/.test(phone.trim())) {
+      setError("请输入中国大陆手机号。");
+      return;
+    }
+    if (!/^\d{6}$/.test(code.trim())) {
+      setError("请输入 6 位数字验证码。");
+      return;
+    }
+    setPending(true);
+    try {
+      const response = await fetch("/api/auth/phone/verify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ phone, code }),
+      });
+      const data = (await response.json().catch(() => null)) as { message?: string; redirect?: string; status?: string; ticket?: string } | null;
+      if (!response.ok) {
+        setError(data?.message || "验证码不正确。");
+        return;
+      }
+      if (data?.redirect) {
+        window.location.assign(data.redirect);
+        return;
+      }
+      if (data?.ticket && (data.status === "register" || data.status === "pending")) {
+        setTicket(data.ticket);
+        setReadyToJoin(data.status === "pending");
+        setNotice(data.message || "");
+        return;
+      }
+      setNotice(data?.message || "操作已完成。");
+    } catch {
+      setError("网络异常，请稍后重试。");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function register(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    if (name.trim().length < 2 || name.trim().length > 40) {
+      setError("姓名需要 2 到 40 个字。");
+      return;
+    }
+    setPending(true);
+    try {
+      const response = await fetch("/api/auth/phone/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ticket, name }),
+      });
+      const data = (await response.json().catch(() => null)) as { message?: string; ticket?: string } | null;
+      if (!response.ok || !data?.ticket) {
+        setError(data?.message || "登记失败，请重新验证手机号。");
+        return;
+      }
+      setTicket(data.ticket);
+      setReadyToJoin(true);
+      setCode("");
+      setNotice(data.message || "已登记。");
+    } catch {
+      setError("网络异常，请稍后重试。");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function submitJoin(event: FormEvent<HTMLFormElement>, kind: "organization" | "invite") {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    setPending(true);
+    try {
+      const response = await fetch(kind === "organization" ? "/api/auth/phone/organization" : "/api/auth/phone/invite", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(kind === "organization" ? { ticket, name: orgName } : { ticket, code: inviteCode }),
+      });
+      const data = (await response.json().catch(() => null)) as { message?: string; redirect?: string } | null;
+      if (!response.ok || !data?.redirect) {
+        setError(data?.message || "没有完成加入。");
+        return;
+      }
+      window.location.assign(data.redirect);
+    } catch {
+      setError("网络异常，请稍后重试。");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function passwordLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     setNotice("");
@@ -86,97 +219,118 @@ export function LoginScreen() {
         <div className="relative z-10 text-xs text-[#8daaa4]">小型培训机构的教学与日常管理平台</div>
       </section>
 
-      <section className="flex items-center justify-center px-6 py-16 lg:px-8">
+      <section className="flex items-center justify-center px-4 py-10 sm:px-6 lg:px-8">
         <div className="w-full max-w-[470px]">
+          <div className="mb-6 flex items-center gap-3 lg:hidden">
+            <span className="grid h-9 w-9 place-items-center rounded-xl bg-[var(--lime)] font-black text-[var(--navy)]">E</span>
+            <span className="text-lg font-extrabold text-[var(--navy)]">EduPilot AI</span>
+          </div>
           <div className="text-[11px] font-extrabold tracking-[2px] text-[var(--teal)]">EDUPILOT AI</div>
-          <h2 className="mt-3 text-[29px] font-semibold tracking-tight">进入你的工作台</h2>
+          <h2 className="mt-3 text-[29px] font-semibold tracking-tight">账号密码登录</h2>
           <p className="mt-2 leading-7 text-[var(--muted)]">使用机构分配的账号登录。登录后只会进入你被授权的工作空间。</p>
 
-          <form onSubmit={onSubmit} className="mt-6 grid gap-3.5">
-            <label className="grid gap-1.5 text-xs font-bold">
-              账号 <span className="font-medium text-[#9a6729]">必填</span>
-              <input
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                autoComplete="username"
-                placeholder="请输入账号"
-                className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]"
-              />
-            </label>
-            <label className="grid gap-1.5 text-xs font-bold">
-              密码 <span className="font-medium text-[#9a6729]">必填</span>
-              <span className="relative">
-                <input
-                  id="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  type={showPassword ? "text" : "password"}
-                  autoComplete="current-password"
-                  placeholder="请输入密码"
-                  className="w-full rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 pr-16 text-sm font-medium outline-none focus:border-[var(--teal)]"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((value) => !value)}
-                  className="absolute right-2.5 top-2.5 bg-transparent px-1.5 py-1 text-[11px] font-medium text-[var(--muted)]"
-                >
-                  {showPassword ? "隐藏" : "显示"}
-                </button>
-              </span>
-            </label>
-            <div className="flex items-center justify-between text-xs text-[var(--muted)]">
-              <label className="flex items-center gap-1.5">
-                <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} />
-                记住我
+          {false && !ticket ? (
+            <form onSubmit={verifyCode} className="mt-6 grid gap-3.5">
+              <label className="grid gap-1.5 text-xs font-bold">
+                手机号 <span className="font-medium text-[#9a6729]">必填</span>
+                <input value={phone} onChange={(event) => setPhone(event.target.value)} inputMode="numeric" autoComplete="tel" placeholder="请输入中国大陆手机号" className={fieldClass} />
               </label>
-              <button
-                type="button"
-                className="bg-transparent text-xs text-[var(--teal)]"
-                onClick={() => setNotice("当前还没有找回密码服务。请联系机构负责人重置账号。")}
-              >
-                忘记密码？
-              </button>
-            </div>
-            {error ? <div className="rounded-[9px] bg-[#fff0ed] px-2.5 py-2.5 text-xs text-[#b94d4d]">{error}</div> : null}
-            {notice ? <div className="rounded-[9px] bg-[#edf2ed] px-2.5 py-2.5 text-xs text-[#5e706b]">{notice}</div> : null}
-            <button
-              type="submit"
-              disabled={pending}
-              className="rounded-[10px] bg-[var(--navy)] px-4 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {pending ? "正在登录…" : "登录工作台　→"}
-            </button>
-            <div className="my-1 flex items-center gap-3 text-[10px] text-[#93a19b]">
-              <span className="h-px flex-1 bg-[var(--line)]" />
-              或填入测试账号
-              <span className="h-px flex-1 bg-[var(--line)]" />
-            </div>
-          </form>
-
-          <div className="mt-4 grid gap-3">
-            {accounts.map((account) => (
-              <button
-                key={account.email}
-                type="button"
-                onClick={() => {
-                  setEmail(account.email);
-                  setError("");
-                  document.getElementById("password")?.focus();
-                }}
-                className="flex w-full items-center gap-3.5 rounded-2xl border border-[var(--line)] bg-white px-4 py-4 text-left transition hover:-translate-y-px hover:border-[var(--teal)] hover:shadow-[0_14px_36px_rgba(24,42,53,.07)]"
-              >
-                <span className="grid h-11 w-11 place-items-center rounded-[13px] bg-[var(--teal-2)] text-xl">{account.icon}</span>
-                <span>
-                  <strong className="block">{account.title}</strong>
-                  <small className="text-[var(--muted)]">{account.detail}</small>
+              <label className="grid gap-1.5 text-xs font-bold">
+                验证码 <span className="font-medium text-[#9a6729]">必填</span>
+                <span className="flex gap-2">
+                  <input value={code} onChange={(event) => setCode(event.target.value)} inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="6 位数字" className={fieldClass} />
+                  <button type="button" disabled={sending || secondsLeft > 0} onClick={sendCode} className="shrink-0 rounded-[10px] bg-[var(--lime)] px-3 text-xs font-bold text-[var(--navy)] disabled:cursor-not-allowed disabled:opacity-60">
+                    {sending ? "正在发送…" : secondsLeft > 0 ? `${secondsLeft}s` : "获取验证码"}
+                  </button>
                 </span>
-                <span className="ml-auto text-xl text-[var(--teal)]">→</span>
+              </label>
+              {error ? <div className="rounded-[9px] bg-[#fff0ed] px-2.5 py-2.5 text-xs text-[#b94d4d]">{error}</div> : null}
+              {notice ? <div className="rounded-[9px] bg-[#edf2ed] px-2.5 py-2.5 text-xs text-[#5e706b]">{notice}</div> : null}
+              {devCode ? <div className="rounded-[9px] bg-[var(--lime)] px-2.5 py-2.5 text-xs font-bold text-[var(--navy)]">开发环境验证码：{devCode}</div> : null}
+              <button type="submit" disabled={pending} className="rounded-[10px] bg-[var(--navy)] px-4 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60">
+                {pending ? "正在验证…" : "登录　→"}
               </button>
-            ))}
-          </div>
-          <div className="mt-4 rounded-xl bg-[#edf2ed] px-3 py-3 text-xs leading-relaxed text-[#5e706b]">
-            身份卡片只会填入测试账号，不会直接进入工作空间。密码由服务端校验，请求里不能自行指定角色。
-          </div>
+            </form>
+          ) : null}
+
+          {false && ticket && !readyToJoin ? (
+            <form onSubmit={register} className="mt-6 grid gap-3.5">
+              <label className="grid gap-1.5 text-xs font-bold">
+                姓名 <span className="font-medium text-[#9a6729]">必填</span>
+                <input value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" placeholder="请输入姓名" className={fieldClass} />
+              </label>
+              {error ? <div className="rounded-[9px] bg-[#fff0ed] px-2.5 py-2.5 text-xs text-[#b94d4d]">{error}</div> : null}
+              {notice ? <div className="rounded-[9px] bg-[#edf2ed] px-2.5 py-2.5 text-xs text-[#5e706b]">{notice}</div> : null}
+              <button type="submit" disabled={pending} className="rounded-[10px] bg-[var(--navy)] px-4 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60">
+                {pending ? "正在登记…" : "完成登记"}
+              </button>
+              <button type="button" onClick={() => { setTicket(""); setReadyToJoin(false); setError(""); }} className="bg-transparent text-xs font-bold text-[var(--teal)]">返回手机号登录</button>
+            </form>
+          ) : null}
+
+          {false && readyToJoin ? (
+            <div className="mt-6 grid gap-3.5">
+              <form onSubmit={(event) => submitJoin(event, "organization")} className="grid gap-2">
+                <label className="grid gap-1.5 text-xs font-bold">
+                  机构名称 <span className="font-medium text-[#9a6729]">创建时必填</span>
+                  <input value={orgName} onChange={(event) => setOrgName(event.target.value)} placeholder="例如：青禾成长中心" className={fieldClass} />
+                </label>
+                <button type="submit" disabled={pending} className="rounded-[10px] bg-[var(--navy)] px-4 py-3 text-sm font-bold text-white disabled:opacity-60">{pending ? "正在创建…" : "创建机构并成为负责人"}</button>
+              </form>
+              <form onSubmit={(event) => submitJoin(event, "invite")} className="grid gap-2">
+                <label className="grid gap-1.5 text-xs font-bold">
+                  邀请码
+                  <input value={inviteCode} onChange={(event) => setInviteCode(event.target.value)} placeholder="输入负责人发给你的邀请码" className={fieldClass} />
+                </label>
+                <button type="submit" disabled={pending} className="rounded-[10px] border border-[var(--line)] bg-white px-4 py-3 text-sm font-bold disabled:opacity-60">{pending ? "正在加入…" : "使用邀请码加入"}</button>
+              </form>
+              {error ? <div className="rounded-[9px] bg-[#fff0ed] px-2.5 py-2.5 text-xs text-[#b94d4d]">{error}</div> : null}
+              {notice ? <div className="rounded-[9px] bg-[#edf2ed] px-2.5 py-2.5 text-xs text-[#5e706b]">{notice}</div> : null}
+            </div>
+          ) : null}
+
+          {true ? (
+            <form onSubmit={passwordLogin} className="mt-6 grid gap-3.5">
+              <p className="rounded-[10px] bg-[var(--lime)] px-3 py-2.5 text-xs font-bold leading-5 text-[var(--navy)]">短信登录即将上线。内测请使用下方账号密码登录。</p>
+              <label className="grid gap-1.5 text-xs font-bold">
+                账号 <span className="font-medium text-[#9a6729]">必填</span>
+                <input value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" placeholder="请输入账号" className={fieldClass} />
+              </label>
+              <label className="grid gap-1.5 text-xs font-bold">
+                密码 <span className="font-medium text-[#9a6729]">必填</span>
+                <span className="relative">
+                  <input id="password" value={password} onChange={(event) => setPassword(event.target.value)} type={showPassword ? "text" : "password"} autoComplete="current-password" placeholder="请输入密码" className={`${fieldClass} pr-16`} />
+                  <button type="button" onClick={() => setShowPassword((value) => !value)} className="absolute right-2.5 top-2.5 bg-transparent px-1.5 py-1 text-[11px] font-medium text-[var(--muted)]">
+                    {showPassword ? "隐藏" : "显示"}
+                  </button>
+                </span>
+              </label>
+              <div className="flex items-center justify-between text-xs text-[var(--muted)]">
+                <label className="flex items-center gap-1.5">
+                  <input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} />
+                  记住我
+                </label>
+                <span className="text-xs text-[var(--muted)]">修改密码即将上线</span>
+              </div>
+              {error ? <div className="rounded-[9px] bg-[#fff0ed] px-2.5 py-2.5 text-xs text-[#b94d4d]">{error}</div> : null}
+              {notice ? <div className="rounded-[9px] bg-[#edf2ed] px-2.5 py-2.5 text-xs text-[#5e706b]">{notice}</div> : null}
+              <button type="submit" disabled={pending} className="rounded-[10px] bg-[var(--navy)] px-4 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60">
+                {pending ? "正在登录…" : "登录工作台　→"}
+              </button>
+              <div className="mt-2 grid gap-3">
+                {accounts.map((account) => (
+                  <button key={account.email} type="button" onClick={() => { setEmail(account.email); setError(""); document.getElementById("password")?.focus(); }} className="flex w-full items-center gap-3.5 rounded-2xl border border-[var(--line)] bg-white px-4 py-4 text-left transition hover:-translate-y-px hover:border-[var(--teal)] hover:shadow-[0_14px_36px_rgba(24,42,53,.07)]">
+                    <span className="grid h-11 w-11 place-items-center rounded-[13px] bg-[var(--teal-2)] text-xl">{account.icon}</span>
+                    <span>
+                      <strong className="block">{account.title}</strong>
+                      <small className="text-[var(--muted)]">{account.detail}</small>
+                    </span>
+                    <span className="ml-auto text-xl text-[var(--teal)]">→</span>
+                  </button>
+                ))}
+              </div>
+            </form>
+          ) : null}
         </div>
       </section>
     </div>

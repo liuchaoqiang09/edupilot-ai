@@ -4,7 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState, useTransition } from "react";
 import { TextField } from "@/components/form-fields";
+import { ParentInviteButton } from "@/components/invite-button";
 import { Modal } from "@/components/modal";
+import { SortHeader } from "@/components/sort-header";
+import type { SortOrder } from "@/lib/table-sort";
 import { createStudent, setStudentStatus, updateStudent, type FieldErrors } from "@/app/owner/students/actions";
 import { linkParent, unlinkParent } from "@/app/owner/students/links";
 
@@ -23,11 +26,15 @@ export type GuardianLink = { id: string; studentId: string; parentUserId: string
 export function StudentDirectory({
   students,
   query,
+  sortBy,
+  order,
   parents,
   links,
 }: {
   students: StudentRow[];
   query: string;
+  sortBy: "name" | "studentNo" | null;
+  order: SortOrder | null;
   parents: ParentAccount[];
   links: GuardianLink[];
 }) {
@@ -118,6 +125,12 @@ export function StudentDirectory({
       </div>
 
       <form action="/owner/students" className="mt-6 flex flex-wrap gap-2">
+        {sortBy && order ? (
+          <>
+            <input type="hidden" name="sortBy" value={sortBy} />
+            <input type="hidden" name="order" value={order} />
+          </>
+        ) : null}
         <input
           name="q"
           defaultValue={query}
@@ -126,7 +139,7 @@ export function StudentDirectory({
         />
         <button className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold text-[#385058]">搜索</button>
         {query ? (
-          <Link href="/owner/students" className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold text-[#385058]">
+          <Link href={sortBy && order ? `/owner/students?sortBy=${sortBy}&order=${order}` : "/owner/students"} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold text-[#385058]">
             重置
           </Link>
         ) : null}
@@ -138,8 +151,8 @@ export function StudentDirectory({
           <table className="w-full min-w-[720px] border-collapse text-left text-xs">
             <thead className="bg-[#fafbf9] text-[10px] tracking-wide text-[#84918e]">
               <tr>
-                <th className="px-4 py-3 font-extrabold">学生</th>
-                <th className="px-4 py-3 font-extrabold">编号</th>
+                <SortHeader label="学生" field="name" sortBy={sortBy} order={order} pathname="/owner/students" query={query} />
+                <SortHeader label="编号" field="studentNo" sortBy={sortBy} order={order} pathname="/owner/students" query={query} />
                 <th className="px-4 py-3 font-extrabold">年级 / 年龄</th>
                 <th className="px-4 py-3 font-extrabold">状态</th>
                 <th className="px-4 py-3 font-extrabold">操作</th>
@@ -235,10 +248,11 @@ export function StudentDirectory({
                 </label>
                 {availableParents.length === 0 ? <p className="text-xs text-[var(--muted)]">没有可绑定的家长账号。</p> : null}
                 {linkMessage ? <p className="text-xs text-[#b94d4d]">{linkMessage}</p> : null}
-                <div>
+                <div className="flex flex-wrap items-start gap-2">
                   <button disabled={pending || availableParents.length === 0} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white disabled:opacity-60">
-                    {pending ? "正在绑定…" : "绑定"}
+                    {pending ? "正在绑定…" : "绑定已有家长"}
                   </button>
+                  <ParentInviteButton studentId={viewing.id} />
                 </div>
               </form>
             </div>

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { AttendanceStatus } from "@prisma/client";
+import { CourseHourError, syncAttendanceCharge } from "@/lib/course-hours";
 import { requireRole } from "@/lib/auth";
 import { attendanceOptions } from "@/lib/lesson-labels";
 import { prisma } from "@/lib/prisma";
@@ -20,46 +21,45 @@ export async function saveAttendance(lessonId: string, formData: FormData): Prom
 
   const lesson = await prisma.lessonSession.findFirst({
     where: { id: lessonId, organizationId: user.organizationId, teacherId: teacher.id, status: { not: "CANCELLED" } },
-    select: { id: true, students: { select: { id: true, studentId: true, hoursCharged: true } } },
+    select: {
+      id: true,
+      courseId: true,
+      course: { select: { name: true, billingType: true } },
+      students: { select: { id: true, studentId: true, student: { select: { name: true } } } },
+    },
   });
   if (!lesson) return { ok: false, message: "这节课不存在，或你无权记录考勤。" };
 
   const updates = lesson.students.map((row) => {
     const status = String(formData.get(`status:${row.studentId}`) ?? "");
     const note = String(formData.get(`note:${row.studentId}`) ?? "").trim();
-    return { id: row.id, status, note };
+    return { ...row, status, note };
   });
   if (updates.some((row) => !statuses.has(row.status))) return { ok: false, message: "考勤状态无效。" };
   if (updates.some((row) => row.note.length > 80)) return { ok: false, message: "备注不能超过 80 个字。" };
 
   const charged = new Set(["PRESENT", "LATE"]);
-  await prisma.$transaction(async (tx) => {
-    for (const row of updates) {
-      const current = lesson.students.find((student) => student.id === row.id);
-      if (!current) continue;
-      const shouldCharge = charged.has(row.status);
-      if (shouldCharge && !current.hoursCharged) {
-        await tx.student.updateMany({
-          where: { id: current.studentId, organizationId: user.organizationId },
-          data: { remainingHours: { decrement: 1 } },
-        });
-      } else if (!shouldCharge && current.hoursCharged) {
-        await tx.student.updateMany({
-          where: { id: current.studentId, organizationId: user.organizationId },
-          data: { remainingHours: { increment: 1 } },
-        });
-      }
-      await tx.lessonStudent.updateMany({
-        where: { id: row.id, organizationId: user.organizationId, lessonSessionId: lesson.id },
-        data: {
+  try {
+    await prisma.$transaction(async (tx) => {
+      for (const row of updates) {
+        await syncAttendanceCharge(tx, {
+          organizationId: user.organizationId,
+          lessonStudentId: row.id,
+          studentId: row.studentId,
+          studentName: row.student.name,
+          courseId: lesson.courseId,
+          courseName: lesson.course.name,
+          billingType: lesson.course.billingType,
+          shouldCharge: charged.has(row.status),
           attendanceStatus: row.status as AttendanceStatus,
           attendanceNote: row.note || null,
-          hoursCharged: shouldCharge,
-          lastAction: shouldCharge ? "出勤扣减 1 课时" : current.hoursCharged ? "撤销课时扣减" : "更新考勤",
-        },
-      });
-    }
-  });
+        });
+      }
+    });
+  } catch (error) {
+    if (error instanceof CourseHourError) return { ok: false, message: error.message };
+    throw error;
+  }
 
   revalidatePath("/teacher");
   revalidatePath("/owner/schedule");

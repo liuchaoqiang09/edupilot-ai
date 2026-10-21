@@ -8,7 +8,8 @@
     "start": "next start",
     "db:generate": "prisma generate",
     "db:deploy": "prisma migrate deploy",
-    "db:seed": "node prisma/seed.mjs"
+    "db:seed": "node prisma/seed.mjs",
+    "demo:reset": "node prisma/demo-reset.mjs"
   },
   "prisma": {
     "seed": "node prisma/seed.mjs"

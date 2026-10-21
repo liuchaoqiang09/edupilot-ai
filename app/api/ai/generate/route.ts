@@ -2,6 +2,7 @@ import { revalidatePath } from "next/cache";
 import { getCurrentUser } from "@/lib/auth";
 import { AiReportError, generateLessonAnalysis } from "@/lib/ai-service";
 import { prisma } from "@/lib/prisma";
+import { generateAndStoreDraft, readOrgReportSettings, recentSummariesForPrompt } from "@/lib/report-flow";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,6 +34,7 @@ export async function POST(request: Request) {
   });
   if (!lesson) return fail("这节课不存在，或你无权生成报告。", 404);
   if (!lesson.teachingRecord) return fail("请先保存教学记录。", 400);
+  const teachingRecord = lesson.teachingRecord;
   if (lesson.students.length === 0) return fail("这节课没有学生，无法生成报告。", 400);
 
   const existing = await prisma.teachingReport.findMany({
@@ -53,46 +55,44 @@ export async function POST(request: Request) {
     return Response.json({ ok: true, message: `${skipped.join("、")}的报告已确认或已发布，没有覆盖。` });
   }
 
+  const organization = await prisma.organization.findUnique({
+    where: { id: user.organizationId },
+    select: { reportLanguage: true, aiUseRecentSummaries: true, aiTeacherMustConfirm: true },
+  });
+  const settings = readOrgReportSettings(organization);
   const names = lesson.students.map((row) => row.student.name);
   let created = 0;
   try {
     for (const row of targets) {
-      const draft = await generateLessonAnalysis({
-        lessonContent: lesson.teachingRecord.lessonContent,
-        studentPerformance: lesson.teachingRecord.studentPerformance,
-        difficulties: lesson.teachingRecord.difficulties,
-        homework: lesson.teachingRecord.homework ?? "",
-        studentNames: names,
+      const history = await recentSummariesForPrompt(prisma, {
+        enabled: settings.aiUseRecentSummaries,
+        organizationId: user.organizationId,
+        studentId: row.studentId,
+        courseId: lesson.courseId,
+        excludeLessonId: lesson.id,
       });
       const current = byStudent.get(row.studentId);
-      const data = {
-        summary: draft.summary,
-        strengths: draft.strengths,
-        issues: draft.issues,
-        nextSteps: draft.nextSteps,
-        homeworkSummary: draft.homeworkSummary,
-        aiModel: draft.aiModel,
-        promptVersion: draft.promptVersion,
-        status: "DRAFT" as const,
-        generatedAt: new Date(),
-        revisionNote: null,
-      };
-      if (current) {
-        await prisma.teachingReport.updateMany({
-          where: { id: current.id, organizationId: user.organizationId, status: { in: ["DRAFT", "RETURNED"] } },
-          data,
-        });
-      } else {
-        await prisma.teachingReport.create({
-          data: {
-            ...data,
-            organizationId: user.organizationId,
-            lessonSessionId: lesson.id,
-            studentId: row.studentId,
-            teachingRecordId: lesson.teachingRecord.id,
-          },
-        });
-      }
+      await generateAndStoreDraft(
+        prisma,
+        {
+          organizationId: user.organizationId,
+          lessonSessionId: lesson.id,
+          studentId: row.studentId,
+          teachingRecordId: teachingRecord.id,
+          existingId: current?.id ?? null,
+        },
+        () =>
+          generateLessonAnalysis({
+            language: settings.reportLanguage,
+            useRecentSummaries: settings.aiUseRecentSummaries,
+            history,
+            lessonContent: teachingRecord.lessonContent,
+            studentPerformance: teachingRecord.studentPerformance,
+            difficulties: teachingRecord.difficulties,
+            homework: teachingRecord.homework ?? "",
+            studentNames: names,
+          }),
+      );
       created += 1;
     }
   } catch (error) {

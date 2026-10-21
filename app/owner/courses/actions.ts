@@ -1,11 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { CourseCategory } from "@prisma/client";
+import { BillingType, CourseCategory } from "@prisma/client";
 import { requireRole } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
-export type FieldErrors = Partial<Record<"name" | "description" | "capacity" | "courseId" | "teacherId", string>>;
+export type FieldErrors = Partial<Record<"name" | "description" | "capacity" | "courseId" | "teacherId" | "billingType", string>>;
 
 export type ActionResult = {
   ok: boolean;
@@ -14,6 +14,11 @@ export type ActionResult = {
 };
 
 const categories = new Set<CourseCategory>(["ACADEMIC", "ART", "EARLY_CHILDHOOD", "OTHER"]);
+const billingTypes = new Set<BillingType>(["PER_LESSON", "PER_PERIOD"]);
+
+function billingTypeOf(value: string): BillingType | null {
+  return billingTypes.has(value as BillingType) ? (value as BillingType) : null;
+}
 
 function clean(value: FormDataEntryValue | null) {
   return typeof value === "string" ? value.trim() : "";
@@ -25,12 +30,14 @@ export async function createCourse(formData: FormData): Promise<ActionResult> {
   const name = clean(formData.get("name"));
   const description = clean(formData.get("description"));
   const categoryValue = clean(formData.get("category"));
+  const billingType = billingTypeOf(clean(formData.get("billingType")));
 
   if (!name) fieldErrors.name = "请填写课程名称。";
   else if (name.length > 40) fieldErrors.name = "课程名称不能超过 40 个字。";
   if (description.length > 200) fieldErrors.description = "描述不能超过 200 个字。";
   if (categoryValue && !categories.has(categoryValue as CourseCategory)) fieldErrors.name = "课程类别无效。";
-  if (Object.keys(fieldErrors).length > 0) return { ok: false, fieldErrors };
+  if (!billingType) fieldErrors.billingType = "请选择计费模式。";
+  if (!billingType || Object.keys(fieldErrors).length > 0) return { ok: false, fieldErrors };
 
   await prisma.course.create({
     data: {
@@ -38,9 +45,41 @@ export async function createCourse(formData: FormData): Promise<ActionResult> {
       name,
       description: description || null,
       category: categoryValue ? (categoryValue as CourseCategory) : null,
+      billingType,
     },
   });
   revalidatePath("/owner/courses");
+  return { ok: true };
+}
+
+export async function updateCourse(formData: FormData): Promise<ActionResult> {
+  const user = await requireRole("OWNER", "owner");
+  const fieldErrors: FieldErrors = {};
+  const id = clean(formData.get("id"));
+  const name = clean(formData.get("name"));
+  const description = clean(formData.get("description"));
+  const categoryValue = clean(formData.get("category"));
+  const billingType = billingTypeOf(clean(formData.get("billingType")));
+
+  if (!name) fieldErrors.name = "请填写课程名称。";
+  else if (name.length > 40) fieldErrors.name = "课程名称不能超过 40 个字。";
+  if (description.length > 200) fieldErrors.description = "描述不能超过 200 个字。";
+  if (categoryValue && !categories.has(categoryValue as CourseCategory)) fieldErrors.name = "课程类别无效。";
+  if (!billingType) fieldErrors.billingType = "请选择计费模式。";
+  if (!billingType || Object.keys(fieldErrors).length > 0) return { ok: false, fieldErrors };
+
+  const updated = await prisma.course.updateMany({
+    where: { id, organizationId: user.organizationId },
+    data: {
+      name,
+      description: description || null,
+      category: categoryValue ? (categoryValue as CourseCategory) : null,
+      billingType,
+    },
+  });
+  if (updated.count !== 1) return { ok: false, message: "找不到这门课程，或你无权修改。" };
+  revalidatePath("/owner/courses");
+  revalidatePath("/owner/billing");
   return { ok: true };
 }
 

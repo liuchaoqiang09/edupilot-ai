@@ -32,6 +32,7 @@ export default async function CoursesPage() {
         name: course.name,
         category: course.category,
         description: course.description,
+        billingType: course.billingType,
         status: course.status,
       }))}
       classes={classes.map((item) => ({

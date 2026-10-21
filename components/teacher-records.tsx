@@ -35,7 +35,7 @@ export type RecordLesson = {
 
 const fieldClass = "rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]";
 
-export function TeacherRecords({ lessons }: { lessons: RecordLesson[] }) {
+export function TeacherRecords({ lessons, requireTeacherConfirm }: { lessons: RecordLesson[]; requireTeacherConfirm: boolean }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [generating, setGenerating] = useState(false);
@@ -137,7 +137,7 @@ export function TeacherRecords({ lessons }: { lessons: RecordLesson[] }) {
               <p className="mt-3 text-xs leading-6 text-[var(--muted)]">生成时只把本节课文字发给模型，学生姓名会替换成“该同学”，内部备注不会发送。已发布的报告不会被覆盖。</p>
             </form>
             {selected.reports.map((report) => (
-              <ReportEditor key={`${report.id}-${report.status}-${report.revision}`} report={report} pending={busy} onSave={(formData) => run(() => updateReport(report.id, formData))} onPublish={() => run(() => publishReport(report.id))} />
+              <ReportEditor key={`${report.id}-${report.status}-${report.revision}`} report={report} pending={busy} requireTeacherConfirm={requireTeacherConfirm} onSave={(formData) => run(() => updateReport(report.id, formData))} onPublish={() => run(() => publishReport(report.id))} />
             ))}
           </div>
         ) : <p className="text-sm text-[var(--muted)]">选择一节课开始填写。</p>}
@@ -149,11 +149,13 @@ export function TeacherRecords({ lessons }: { lessons: RecordLesson[] }) {
 function ReportEditor({
   report,
   pending,
+  requireTeacherConfirm,
   onSave,
   onPublish,
 }: {
   report: RecordLesson["reports"][number];
   pending: boolean;
+  requireTeacherConfirm: boolean;
   onSave: (formData: FormData) => void;
   onPublish: () => void;
 }) {
@@ -174,10 +176,13 @@ function ReportEditor({
         <label className="grid gap-1.5 text-xs font-bold">下一步建议<textarea name="nextSteps" rows={2} defaultValue={report.nextSteps} disabled={locked} className={fieldClass} /></label>
         <label className="grid gap-1.5 text-xs font-bold">作业建议<textarea name="homeworkSummary" rows={2} defaultValue={report.homeworkSummary} disabled={locked} className={fieldClass} /></label>
       </div>
-      {locked ? <p className="mt-3 text-xs text-[var(--muted)]">已发布的内容不能直接改。负责人退回后才能再编辑并重新发布。</p> : (
+      {locked ? <p className="mt-3 text-xs text-[var(--muted)]">{report.status === "CONFIRMED" ? "报告已确认。发布后家长才能查看。需要修改时，请负责人退回。" : "已发布的内容不能直接改。负责人退回后才能再编辑并重新发布。"}</p> : null}
+      {report.status === "PUBLISHED" ? null : (
         <div className="mt-4 flex flex-wrap gap-2">
-          <button disabled={pending} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold disabled:opacity-60">保存修改</button>
-          <button type="button" disabled={pending} onClick={onPublish} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white disabled:opacity-60">确认并发布</button>
+          {locked ? null : <button disabled={pending} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold disabled:opacity-60">保存修改</button>}
+          <button type="button" disabled={pending} onClick={onPublish} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white disabled:opacity-60">
+            {report.status === "CONFIRMED" ? "发布给家长" : requireTeacherConfirm ? "确认报告" : "确认并发布"}
+          </button>
         </div>
       )}
     </form>

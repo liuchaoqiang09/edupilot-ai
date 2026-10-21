@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { FormEvent, useState, useTransition } from "react";
-import { archiveClassGroup, archiveCourse, createClassGroup, createCourse, type FieldErrors } from "@/app/owner/courses/actions";
+import { archiveClassGroup, archiveCourse, createClassGroup, createCourse, updateCourse, type FieldErrors } from "@/app/owner/courses/actions";
 import { FieldError, TextField } from "@/components/form-fields";
 import { Modal } from "@/components/modal";
 
@@ -14,6 +14,7 @@ export type CourseRow = {
   name: string;
   category: "ACADEMIC" | "ART" | "EARLY_CHILDHOOD" | "OTHER" | null;
   description: string | null;
+  billingType: "PER_LESSON" | "PER_PERIOD";
   status: "ACTIVE" | "ARCHIVED";
 };
 
@@ -24,6 +25,11 @@ export type ClassRow = {
   teacherName: string;
   capacity: number | null;
   status: "ACTIVE" | "ARCHIVED";
+};
+
+const billingLabels: Record<CourseRow["billingType"], string> = {
+  PER_LESSON: "按课时",
+  PER_PERIOD: "按周期",
 };
 
 const categoryLabels: Record<NonNullable<CourseRow["category"]>, string> = {
@@ -48,6 +54,7 @@ export function CourseDirectory({
   const [pending, startTransition] = useTransition();
   const [creating, setCreating] = useState<"course" | "class" | null>(null);
   const [archiving, setArchiving] = useState<{ kind: "course" | "class"; id: string; name: string } | null>(null);
+  const [editing, setEditing] = useState<CourseRow | null>(null);
   const [message, setMessage] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
@@ -64,6 +71,23 @@ export function CourseDirectory({
         return;
       }
       setCreating(null);
+      router.refresh();
+    });
+  }
+
+  function saveEdit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    setMessage("");
+    setFieldErrors({});
+    startTransition(async () => {
+      const result = await updateCourse(formData);
+      if (!result.ok) {
+        setMessage(result.message ?? "");
+        setFieldErrors(result.fieldErrors ?? {});
+        return;
+      }
+      setEditing(null);
       router.refresh();
     });
   }
@@ -126,6 +150,7 @@ export function CourseDirectory({
               <tr>
                 <th className="px-4 py-3 font-extrabold">课程</th>
                 <th className="px-4 py-3 font-extrabold">类别</th>
+                <th className="px-4 py-3 font-extrabold">计费</th>
                 <th className="px-4 py-3 font-extrabold">说明</th>
                 <th className="px-4 py-3 font-extrabold">状态</th>
                 <th className="px-4 py-3 font-extrabold">操作</th>
@@ -134,7 +159,7 @@ export function CourseDirectory({
             <tbody>
               {courses.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-12 text-center leading-7 text-[var(--muted)]">
+                  <td colSpan={6} className="px-4 py-12 text-center leading-7 text-[var(--muted)]">
                     还没有课程。可以先创建一门课程，再创建班级。
                   </td>
                 </tr>
@@ -143,6 +168,7 @@ export function CourseDirectory({
                   <tr key={course.id} className="border-t border-[#eef1ee]">
                     <td className="px-4 py-4 font-bold">{course.name}</td>
                     <td className="px-4 py-4 text-[var(--muted)]">{course.category ? categoryLabels[course.category] : "未分类"}</td>
+                    <td className="px-4 py-4">{billingLabels[course.billingType]}</td>
                     <td className="px-4 py-4 text-[var(--muted)]">{course.description ?? "—"}</td>
                     <td className="px-4 py-4">
                       <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${course.status === "ACTIVE" ? "bg-[#edf5f1] text-[#34725d]" : "bg-[#fff2df] text-[#9a6729]"}`}>
@@ -150,13 +176,14 @@ export function CourseDirectory({
                       </span>
                     </td>
                     <td className="px-4 py-4">
-                      {course.status === "ACTIVE" ? (
-                        <button type="button" className="font-bold text-[#9a6729]" onClick={() => setArchiving({ kind: "course", id: course.id, name: course.name })}>
-                          归档
-                        </button>
-                      ) : (
-                        "—"
-                      )}
+                      <span className="flex gap-3">
+                        <button type="button" className="font-bold text-[var(--teal)]" onClick={() => { setEditing(course); setFieldErrors({}); setMessage(""); }}>编辑</button>
+                        {course.status === "ACTIVE" ? (
+                          <button type="button" className="font-bold text-[#9a6729]" onClick={() => setArchiving({ kind: "course", id: course.id, name: course.name })}>
+                            归档
+                          </button>
+                        ) : null}
+                      </span>
                     </td>
                   </tr>
                 ))
@@ -246,6 +273,14 @@ export function CourseDirectory({
                 </select>
               </label>
               <label className="grid gap-1.5 text-xs font-bold">
+                计费模式 <span className="font-medium text-[#9a6729]">必填</span>
+                <select name="billingType" defaultValue="PER_LESSON" className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]">
+                  <option value="PER_LESSON">按课时</option>
+                  <option value="PER_PERIOD">按周期</option>
+                </select>
+                <FieldError message={fieldErrors.billingType} />
+              </label>
+              <label className="grid gap-1.5 text-xs font-bold">
                 说明
                 <textarea name="description" rows={3} placeholder="选填" className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]" />
                 <FieldError message={fieldErrors.description} />
@@ -254,6 +289,45 @@ export function CourseDirectory({
             {message ? <p className="mt-3 text-xs text-[#b94d4d]">{message}</p> : null}
             <div className="mt-5 flex justify-end gap-2">
               <button type="button" onClick={() => setCreating(null)} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold">取消</button>
+              <button disabled={pending} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white disabled:opacity-60">{pending ? "正在保存…" : "保存"}</button>
+            </div>
+          </form>
+        </Modal>
+      ) : null}
+
+      {editing ? (
+        <Modal title="编辑课程" onClose={() => setEditing(null)}>
+          <form key={editing.id} onSubmit={saveEdit} className="px-5 py-5">
+            <input type="hidden" name="id" value={editing.id} />
+            <div className="grid gap-3">
+              <TextField label="课程名称" name="name" required defaultValue={editing.name} error={fieldErrors.name} />
+              <label className="grid gap-1.5 text-xs font-bold">
+                类别
+                <select name="category" defaultValue={editing.category ?? ""} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]">
+                  <option value="">不分类</option>
+                  <option value="ACADEMIC">学科</option>
+                  <option value="ART">艺术</option>
+                  <option value="EARLY_CHILDHOOD">早教</option>
+                  <option value="OTHER">其他</option>
+                </select>
+              </label>
+              <label className="grid gap-1.5 text-xs font-bold">
+                计费模式 <span className="font-medium text-[#9a6729]">必填</span>
+                <select name="billingType" defaultValue={editing.billingType} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]">
+                  <option value="PER_LESSON">按课时</option>
+                  <option value="PER_PERIOD">按周期</option>
+                </select>
+                <FieldError message={fieldErrors.billingType} />
+              </label>
+              <label className="grid gap-1.5 text-xs font-bold">
+                说明
+                <textarea name="description" rows={3} defaultValue={editing.description ?? ""} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]" />
+                <FieldError message={fieldErrors.description} />
+              </label>
+            </div>
+            {message ? <p className="mt-3 text-xs text-[#b94d4d]">{message}</p> : null}
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setEditing(null)} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold">取消</button>
               <button disabled={pending} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white disabled:opacity-60">{pending ? "正在保存…" : "保存"}</button>
             </div>
           </form>
