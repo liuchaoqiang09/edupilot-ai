@@ -85,7 +85,7 @@ export function TeacherDirectory({
       </div>
 
       <form action="/owner/teachers" className="mt-6 flex flex-wrap gap-2">
-        <input name="q" defaultValue={query} placeholder="搜索教师姓名" className="min-w-[220px] flex-1 rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm outline-none focus:border-[var(--teal)]" />
+        <input name="q" defaultValue={query} placeholder="搜索教师姓名" className="w-full rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm outline-none focus:border-[var(--teal)] sm:w-auto sm:min-w-[220px] sm:flex-1" />
         <button className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold text-[#385058]">搜索</button>
         {query ? <Link href="/owner/teachers" className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold text-[#385058]">重置</Link> : null}
       </form>

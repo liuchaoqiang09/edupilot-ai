@@ -24,6 +24,7 @@ export function TeacherSchedule({
   dateLabel,
   linked,
   lessons,
+  showIntro = true,
 }: {
   date: string;
   previousDate: string;
@@ -31,6 +32,7 @@ export function TeacherSchedule({
   dateLabel: string;
   linked: boolean;
   lessons: TeacherLesson[];
+  showIntro?: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -55,8 +57,12 @@ export function TeacherSchedule({
 
   return (
     <section>
-      <h1 className="text-[28px] font-semibold tracking-tight">我的课表</h1>
-      <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">只显示分配给当前教师档案的课次。点开一节课即可记录出勤。</p>
+      {showIntro ? (
+        <>
+          <h1 className="text-[28px] font-semibold tracking-tight">我的课表</h1>
+          <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">只显示分配给当前教师档案的课次。点开一节课即可记录出勤。</p>
+        </>
+      ) : null}
 
       {!linked ? (
         <p className="mt-4 rounded-xl bg-[#fff2df] px-4 py-3 text-xs leading-6 text-[#9a6729]">

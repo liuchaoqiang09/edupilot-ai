@@ -266,7 +266,7 @@ export function CourseDirectory({
             <div className="grid gap-3">
               <TextField label="班级名称" name="name" required placeholder="例如：初二数学 A 班" error={fieldErrors.name} />
               <label className="grid gap-1.5 text-xs font-bold">
-                所属课程 *
+                所属课程 <span className="font-medium text-[#9a6729]">必填</span>
                 <select name="courseId" defaultValue="" required className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]">
                   <option value="">请选择课程</option>
                   {courseOptions.map((course) => (
@@ -276,7 +276,7 @@ export function CourseDirectory({
                 <FieldError message={fieldErrors.courseId} />
               </label>
               <label className="grid gap-1.5 text-xs font-bold">
-                主讲教师 *
+                主讲教师 <span className="font-medium text-[#9a6729]">必填</span>
                 <select name="teacherId" defaultValue="" required className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]">
                   <option value="">请选择教师</option>
                   {teacherOptions.map((teacher) => (

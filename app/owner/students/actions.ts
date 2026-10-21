@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { MemberStatus, Prisma } from "@prisma/client";
+import { writeAudit } from "@/lib/audit";
 import { requireRole } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 
@@ -115,11 +116,32 @@ export async function setStudentStatus(id: string, status: MemberStatus): Promis
   const user = await requireRole("OWNER", "owner");
   if (status !== "ACTIVE" && status !== "INACTIVE") return { ok: false, message: "状态无效。" };
 
-  const result = await prisma.student.updateMany({
+  const existing = await prisma.student.findFirst({
     where: { id, organizationId: user.organizationId },
+    select: { id: true, status: true },
+  });
+  if (!existing) return { ok: false, message: "找不到这名学生，或你无权修改。" };
+  if (existing.status === status) {
+    revalidatePath("/owner/students");
+    return { ok: true };
+  }
+
+  const result = await prisma.student.updateMany({
+    where: { id, organizationId: user.organizationId, status: existing.status },
     data: { status },
   });
-  if (result.count !== 1) return { ok: false, message: "找不到这名学生，或你无权修改。" };
+  if (result.count !== 1) return { ok: false, message: "状态没有更新，请刷新后再试。" };
+
+  if (status === "INACTIVE") {
+    await writeAudit(prisma, {
+      organizationId: user.organizationId,
+      actorId: user.id,
+      action: "STUDENT_DEACTIVATED",
+      targetType: "Student",
+      targetId: id,
+      detail: "负责人停用学生",
+    });
+  }
 
   revalidatePath("/owner/students");
   return { ok: true };

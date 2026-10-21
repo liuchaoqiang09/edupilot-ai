@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useMemo, useState, useTransition } from "react";
-import { cancelLesson, createLesson, type FieldErrors } from "@/app/owner/schedule/actions";
+import { cancelLesson, createLesson, removeLessonStudent, updateLessonTeacher, type FieldErrors } from "@/app/owner/schedule/actions";
 import { FieldError, TextField } from "@/components/form-fields";
 import { Modal } from "@/components/modal";
 import { attendanceLabel, lessonStatusLabel } from "@/lib/lesson-labels";
@@ -26,6 +26,7 @@ export type ScheduleLesson = {
   endLabel: string;
   courseName: string;
   className: string;
+  teacherId: string;
   teacherName: string;
   location: string | null;
   status: keyof typeof lessonStatusLabel;
@@ -60,6 +61,8 @@ export function ScheduleBoard({
   const [teacherId, setTeacherId] = useState(classes[0]?.teacherId ?? "");
   const [message, setMessage] = useState("");
   const [warning, setWarning] = useState("");
+  const [conflictWarning, setConflictWarning] = useState("");
+  const [teacherWarning, setTeacherWarning] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
   const selectedClass = useMemo(() => classes.find((item) => item.id === classId) ?? null, [classes, classId]);
@@ -70,6 +73,7 @@ export function ScheduleBoard({
     setTeacherId(first?.teacherId ?? "");
     setFieldErrors({});
     setMessage("");
+    setConflictWarning("");
     setCreating(true);
   }
 
@@ -83,10 +87,47 @@ export function ScheduleBoard({
       if (!result.ok) {
         setMessage(result.message ?? "");
         setFieldErrors(result.fieldErrors ?? {});
+        setConflictWarning(result.warning ?? "");
         return;
       }
+      setConflictWarning("");
       setWarning(result.warning ?? "");
       setCreating(false);
+      router.refresh();
+    });
+  }
+
+  function changeTeacher(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!viewing) return;
+    const formData = new FormData(event.currentTarget);
+    setMessage("");
+    setFieldErrors({});
+    startTransition(async () => {
+      const result = await updateLessonTeacher(viewing.id, formData);
+      if (!result.ok) {
+        setMessage(result.message ?? "");
+        setFieldErrors(result.fieldErrors ?? {});
+        setTeacherWarning(result.warning ?? "");
+        return;
+      }
+      setTeacherWarning("");
+      setViewing(null);
+      setWarning(result.warning ?? "");
+      router.refresh();
+    });
+  }
+
+  function removeStudent(studentId: string) {
+    if (!viewing) return;
+    setMessage("");
+    startTransition(async () => {
+      const result = await removeLessonStudent(viewing.id, studentId);
+      if (!result.ok) {
+        setMessage(result.message ?? "移出失败。");
+        return;
+      }
+      setViewing((current) => (current ? { ...current, students: current.students.filter((student) => student.id !== studentId) } : current));
       router.refresh();
     });
   }
@@ -154,7 +195,7 @@ export function ScheduleBoard({
                     <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${lesson.status === "CANCELLED" ? "bg-[#fff0ed] text-[#b94d4d]" : "bg-[#edf5f1] text-[#34725d]"}`}>
                       {lessonStatusLabel[lesson.status]}
                     </span>
-                    <button type="button" className="text-xs font-bold text-[var(--teal)]" onClick={() => setViewing(lesson)}>查看</button>
+                    <button type="button" className="text-xs font-bold text-[var(--teal)]" onClick={() => { setTeacherWarning(""); setMessage(""); setFieldErrors({}); setViewing(lesson); }}>查看</button>
                   </div>
                 </li>
               );
@@ -168,7 +209,7 @@ export function ScheduleBoard({
           <form onSubmit={save} className="px-5 py-5">
             <div className="grid gap-3">
               <label className="grid gap-1.5 text-xs font-bold">
-                班级 *
+                班级 <span className="font-medium text-[#9a6729]">必填</span>
                 <select
                   name="classGroupId"
                   value={classId}
@@ -190,8 +231,8 @@ export function ScheduleBoard({
                 课程：{selectedClass?.courseName ?? "选择班级后自动带出"}
               </p>
               <label className="grid gap-1.5 text-xs font-bold">
-                主讲教师 *
-                <select name="teacherId" value={teacherId} onChange={(event) => setTeacherId(event.target.value)} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]">
+                主讲教师 <span className="font-medium text-[#9a6729]">必填</span>
+                <select name="teacherId" value={teacherId} onChange={(event) => { setTeacherId(event.target.value); setConflictWarning(""); }} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]">
                   <option value="">请选择教师</option>
                   {teachers.map((teacher) => (
                     <option key={teacher.id} value={teacher.id}>{teacher.name}{teacher.linked ? " · 可登录查看" : " · 未关联账号"}</option>
@@ -201,13 +242,13 @@ export function ScheduleBoard({
               </label>
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="grid gap-1.5 text-xs font-bold">
-                  开始时间 *
-                  <input type="datetime-local" name="startAt" required defaultValue={`${date}T16:00`} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]" />
+                  开始时间 <span className="font-medium text-[#9a6729]">必填</span>
+                  <input type="datetime-local" name="startAt" required defaultValue={`${date}T16:00`} onChange={() => setConflictWarning("")} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]" />
                   <FieldError message={fieldErrors.startAt} />
                 </label>
                 <label className="grid gap-1.5 text-xs font-bold">
-                  结束时间 *
-                  <input type="datetime-local" name="endAt" required defaultValue={`${date}T17:30`} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]" />
+                  结束时间 <span className="font-medium text-[#9a6729]">必填</span>
+                  <input type="datetime-local" name="endAt" required defaultValue={`${date}T17:30`} onChange={() => setConflictWarning("")} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]" />
                   <FieldError message={fieldErrors.endAt} />
                 </label>
               </div>
@@ -228,11 +269,17 @@ export function ScheduleBoard({
                 <FieldError message={fieldErrors.students} />
               </fieldset>
             </div>
+            {conflictWarning ? (
+              <>
+                <input type="hidden" name="acknowledgeConflict" value="1" />
+                <p className="mt-3 rounded-xl bg-[#fff2df] px-3 py-3 text-xs leading-6 text-[#9a6729]">{conflictWarning}</p>
+              </>
+            ) : null}
             {message ? <p className="mt-3 text-xs text-[#b94d4d]">{message}</p> : null}
             <div className="mt-5 flex justify-end gap-2">
               <button type="button" onClick={() => setCreating(false)} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold">取消</button>
               <button disabled={pending || classes.length === 0} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white disabled:opacity-60">
-                {pending ? "正在保存…" : "保存"}
+                {pending ? "正在保存…" : conflictWarning ? "仍然保存" : "保存"}
               </button>
             </div>
           </form>
@@ -249,11 +296,45 @@ export function ScheduleBoard({
                 {viewing.students.map((student) => (
                   <li key={student.id} className="flex items-center justify-between rounded-xl bg-[#f7faf8] px-3 py-2">
                     <span className="font-bold">{student.name}</span>
-                    <span className="text-xs text-[var(--muted)]">{attendanceLabel[student.attendanceStatus]}{student.attendanceNote ? ` · ${student.attendanceNote}` : ""}</span>
+                    <span className="flex items-center gap-3 text-xs text-[var(--muted)]">
+                      {attendanceLabel[student.attendanceStatus]}{student.attendanceNote ? ` · ${student.attendanceNote}` : ""}
+                      {viewing.status !== "CANCELLED" ? (
+                        <button type="button" className="font-bold text-[#9a6729]" onClick={() => removeStudent(student.id)}>移出</button>
+                      ) : null}
+                    </span>
                   </li>
                 ))}
               </ul>
             )}
+            {viewing.status !== "CANCELLED" ? (
+              <form key={viewing.id} onSubmit={changeTeacher} className="grid gap-2 rounded-xl border border-[var(--line)] p-3">
+                <label className="grid gap-1.5 text-xs font-bold">
+                  更换教师
+                  <select
+                    name="teacherId"
+                    defaultValue={viewing.teacherId}
+                    onChange={() => setTeacherWarning("")}
+                    className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]"
+                  >
+                    {teachers.map((teacher) => (
+                      <option key={teacher.id} value={teacher.id}>{teacher.name}{teacher.linked ? "" : " · 未关联账号"}</option>
+                    ))}
+                  </select>
+                  <FieldError message={fieldErrors.teacherId} />
+                </label>
+                {teacherWarning ? (
+                  <>
+                    <input type="hidden" name="acknowledgeConflict" value="1" />
+                    <p className="rounded-xl bg-[#fff2df] px-3 py-3 text-xs leading-6 text-[#9a6729]">{teacherWarning}</p>
+                  </>
+                ) : null}
+                <div className="flex justify-end">
+                  <button disabled={pending} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold disabled:opacity-60">
+                    {pending ? "正在保存…" : teacherWarning ? "仍然更换" : "保存教师"}
+                  </button>
+                </div>
+              </form>
+            ) : null}
             {message ? <p className="text-xs text-[#b94d4d]">{message}</p> : null}
             <div className="flex justify-end gap-2">
               {viewing.status === "SCHEDULED" ? (

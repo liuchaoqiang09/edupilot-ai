@@ -122,7 +122,7 @@ export function StudentDirectory({
           name="q"
           defaultValue={query}
           placeholder="搜索姓名或编号"
-          className="min-w-[220px] flex-1 rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm outline-none focus:border-[var(--teal)]"
+          className="w-full rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm outline-none focus:border-[var(--teal)] sm:w-auto sm:min-w-[220px] sm:flex-1"
         />
         <button className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold text-[#385058]">搜索</button>
         {query ? (

@@ -1,8 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { writeAudit } from "@/lib/audit";
 import { requireRole } from "@/lib/auth";
-import { parseShanghaiDateTime } from "@/lib/datetime";
+import { formatDateTime, parseShanghaiDateTime } from "@/lib/datetime";
 import { prisma } from "@/lib/prisma";
 
 export type FieldErrors = Partial<Record<"classGroupId" | "teacherId" | "startAt" | "endAt" | "location" | "students", string>>;
@@ -23,6 +24,26 @@ function refresh() {
   revalidatePath("/teacher");
   revalidatePath("/parent/schedule");
   revalidatePath("/parent/attendance");
+  revalidatePath("/owner/billing");
+}
+
+function overlapMessage(lesson: { title: string | null; startAt: Date }) {
+  const name = lesson.title ?? "未命名课次";
+  return `这位教师在 ${formatDateTime(lesson.startAt)} 已有课次「${name}」。再次点击保存仍会继续，请确认是否冲突。`;
+}
+
+async function teacherOverlap(organizationId: string, teacherId: string, startAt: Date, endAt: Date, excludeLessonId?: string) {
+  return prisma.lessonSession.findFirst({
+    where: {
+      organizationId,
+      teacherId,
+      status: { not: "CANCELLED" },
+      ...(excludeLessonId ? { id: { not: excludeLessonId } } : {}),
+      startAt: { lt: endAt },
+      endAt: { gt: startAt },
+    },
+    select: { title: true, startAt: true },
+  });
 }
 
 export async function createLesson(formData: FormData): Promise<ActionResult> {
@@ -65,16 +86,10 @@ export async function createLesson(formData: FormData): Promise<ActionResult> {
     return { ok: false, fieldErrors: { students: "名单里有不属于本机构或已停用的学生。" } };
   }
 
-  const overlap = await prisma.lessonSession.findFirst({
-    where: {
-      organizationId: user.organizationId,
-      teacherId: teacher.id,
-      status: { not: "CANCELLED" },
-      startAt: { lt: endAt! },
-      endAt: { gt: startAt! },
-    },
-    select: { id: true },
-  });
+  const overlap = await teacherOverlap(user.organizationId, teacher.id, startAt!, endAt!);
+  if (overlap && formData.get("acknowledgeConflict") !== "1") {
+    return { ok: false, warning: overlapMessage(overlap) };
+  }
 
   await prisma.lessonSession.create({
     data: {
@@ -101,11 +116,81 @@ export async function createLesson(formData: FormData): Promise<ActionResult> {
   return {
     ok: true,
     warning: overlap
-      ? "课次已保存。这位教师在同一时间还有另一节未取消的课，请核对是否冲突。"
+      ? "课次已保存。这位教师在同一时间还有另一节未取消的课。"
       : teacher.userId
         ? undefined
         : "课次已保存。这位教师还没有关联登录账号，教师端暂时看不到这节课。",
   };
+}
+
+export async function updateLessonTeacher(lessonId: string, formData: FormData): Promise<ActionResult> {
+  const user = await requireRole("OWNER", "owner");
+  const teacherId = clean(formData.get("teacherId"));
+  if (!teacherId) return { ok: false, fieldErrors: { teacherId: "请选择教师。" } };
+
+  const lesson = await prisma.lessonSession.findFirst({
+    where: { id: lessonId, organizationId: user.organizationId, status: { not: "CANCELLED" } },
+    select: { id: true, teacherId: true, startAt: true, endAt: true },
+  });
+  if (!lesson) return { ok: false, message: "这节课不存在，或已经取消。" };
+
+  const teacher = await prisma.teacher.findFirst({
+    where: { id: teacherId, organizationId: user.organizationId, status: "ACTIVE" },
+    select: { id: true, userId: true },
+  });
+  if (!teacher) return { ok: false, fieldErrors: { teacherId: "只能选择本机构的在职教师。" } };
+  if (teacher.id === lesson.teacherId) return { ok: true };
+
+  const overlap = await teacherOverlap(user.organizationId, teacher.id, lesson.startAt, lesson.endAt, lesson.id);
+  if (overlap && formData.get("acknowledgeConflict") !== "1") {
+    return { ok: false, warning: overlapMessage(overlap) };
+  }
+
+  const updated = await prisma.lessonSession.updateMany({
+    where: { id: lesson.id, organizationId: user.organizationId, status: { not: "CANCELLED" } },
+    data: { teacherId: teacher.id },
+  });
+  if (updated.count !== 1) return { ok: false, message: "教师没有更换，请刷新后再试。" };
+
+  refresh();
+  return {
+    ok: true,
+    warning: overlap
+      ? "教师已更换。这位教师在同一时间还有另一节未取消的课。"
+      : teacher.userId
+        ? undefined
+        : "教师已更换。这位教师还没有关联登录账号，教师端暂时看不到这节课。",
+  };
+}
+
+export async function removeLessonStudent(lessonId: string, studentId: string): Promise<ActionResult> {
+  const user = await requireRole("OWNER", "owner");
+  const row = await prisma.lessonStudent.findFirst({
+    where: { lessonSessionId: lessonId, studentId, organizationId: user.organizationId, lessonSession: { status: { not: "CANCELLED" } } },
+    select: { id: true, hoursCharged: true },
+  });
+  if (!row) return { ok: false, message: "名单里没有这名学生，或这节课已经取消。" };
+
+  await prisma.$transaction(async (tx) => {
+    if (row.hoursCharged) {
+      await tx.student.updateMany({
+        where: { id: studentId, organizationId: user.organizationId },
+        data: { remainingHours: { increment: 1 } },
+      });
+    }
+    await tx.lessonStudent.delete({ where: { id: row.id } });
+    await writeAudit(tx, {
+      organizationId: user.organizationId,
+      actorId: user.id,
+      action: "ROSTER_REMOVED",
+      targetType: "LessonStudent",
+      targetId: row.id,
+      detail: row.hoursCharged ? "移出课次名单，并退回 1 课时" : "移出课次名单",
+    });
+  });
+
+  refresh();
+  return { ok: true };
 }
 
 export async function cancelLesson(id: string): Promise<ActionResult> {

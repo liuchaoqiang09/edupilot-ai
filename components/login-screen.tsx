@@ -94,7 +94,7 @@ export function LoginScreen() {
 
           <form onSubmit={onSubmit} className="mt-6 grid gap-3.5">
             <label className="grid gap-1.5 text-xs font-bold">
-              账号
+              账号 <span className="font-medium text-[#9a6729]">必填</span>
               <input
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
@@ -104,7 +104,7 @@ export function LoginScreen() {
               />
             </label>
             <label className="grid gap-1.5 text-xs font-bold">
-              密码
+              密码 <span className="font-medium text-[#9a6729]">必填</span>
               <span className="relative">
                 <input
                   id="password"

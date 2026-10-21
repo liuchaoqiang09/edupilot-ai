@@ -1,8 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { writeAudit } from "@/lib/audit";
 import { requireRole } from "@/lib/auth";
-import { mockStudentReport } from "@/lib/mock-report";
 import { prisma } from "@/lib/prisma";
 
 export type ActionResult = { ok: boolean; message?: string };
@@ -79,61 +79,6 @@ export async function saveTeachingRecord(lessonId: string, formData: FormData): 
   return { ok: true };
 }
 
-export async function generateMockReports(lessonId: string): Promise<ActionResult> {
-  const { user, teacher, lesson } = await ownLesson(lessonId);
-  if (!teacher) return { ok: false, message: "当前账号还没有关联在职教师档案。" };
-  if (!lesson) return { ok: false, message: "这节课不存在，或你无权生成报告。" };
-  if (!lesson.teachingRecord) return { ok: false, message: "请先保存教学记录。" };
-  if (lesson.students.length === 0) return { ok: false, message: "这节课没有学生，无法生成报告。" };
-
-  const existing = await prisma.teachingReport.findMany({
-    where: { organizationId: user.organizationId, lessonSessionId: lesson.id },
-    select: { id: true, studentId: true, status: true },
-  });
-  const byStudent = new Map(existing.map((report) => [report.studentId, report]));
-  const skipped: string[] = [];
-  const writes = lesson.students.flatMap((row) => {
-    const current = byStudent.get(row.studentId);
-    if (current && (current.status === "PUBLISHED" || current.status === "CONFIRMED")) {
-      skipped.push(row.student.name);
-      return [];
-    }
-    const draft = mockStudentReport(row.student.name, lesson.teachingRecord!);
-    const data = {
-      ...draft,
-      status: "DRAFT" as const,
-      generatedAt: new Date(),
-      revisionNote: null,
-    };
-    if (current) {
-      return [
-        prisma.teachingReport.updateMany({
-          where: { id: current.id, organizationId: user.organizationId, status: { in: ["DRAFT", "RETURNED"] } },
-          data,
-        }),
-      ];
-    }
-    return [
-      prisma.teachingReport.create({
-        data: {
-          ...data,
-          organizationId: user.organizationId,
-          lessonSessionId: lesson.id,
-          studentId: row.studentId,
-          teachingRecordId: lesson.teachingRecord!.id,
-        },
-      }),
-    ];
-  });
-  if (writes.length > 0) await prisma.$transaction(writes);
-
-  refresh();
-  return {
-    ok: true,
-    message: skipped.length ? `已生成草稿。${skipped.join("、")}的报告已确认或已发布，没有覆盖。` : "已为名单中的学生生成草稿。",
-  };
-}
-
 export async function updateReport(reportId: string, formData: FormData): Promise<ActionResult> {
   const user = await requireRole("TEACHER", "teacher");
   const teacher = await prisma.teacher.findFirst({
@@ -200,6 +145,14 @@ export async function publishReport(reportId: string): Promise<ActionResult> {
     },
   });
   if (updated.count !== 1) return { ok: false, message: "发布没有完成，请刷新后再试。" };
+  await writeAudit(prisma, {
+    organizationId: user.organizationId,
+    actorId: user.id,
+    action: "REPORT_PUBLISHED",
+    targetType: "TeachingReport",
+    targetId: report.id,
+    detail: "教师发布报告",
+  });
   refresh();
   return { ok: true };
 }

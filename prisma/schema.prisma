@@ -66,13 +66,27 @@ enum ReportStatus {
   @@schema("edupilot")
 }
 
+enum EnrollmentStatus {
+  PAID
+  PARTIAL
+  UNPAID
+
+  @@schema("edupilot")
+}
+
 /// 机构是租户边界。主键即租户标识，业务数据通过 organizationId 指向这里。
 model Organization {
-  id        String   @id @default(cuid())
-  name      String
-  timezone  String    @default("Asia/Shanghai")
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id                     String           @id @default(cuid())
+  name                   String
+  timezone               String           @default("Asia/Shanghai")
+  businessTypes          CourseCategory[] @default([ACADEMIC])
+  reportLanguage         String           @default("zh-CN")
+  aiUseRecentSummaries   Boolean          @default(true)
+  aiRequireEvidence      Boolean          @default(true)
+  aiTeacherMustConfirm   Boolean          @default(true)
+  aiOwnerSpotCheck       Boolean          @default(true)
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
   users              User[]
   students           Student[]
   teachers           Teacher[]
@@ -83,6 +97,8 @@ model Organization {
   lessonStudents     LessonStudent[]
   teachingRecords    TeachingRecord[]
   teachingReports    TeachingReport[]
+  enrollments        Enrollment[]
+  auditLogs          AuditLog[]
 
   @@schema("edupilot")
 }
@@ -103,6 +119,8 @@ model User {
   createdLessons     LessonSession[]
   confirmedReports   TeachingReport[] @relation("ReportConfirmedBy")
   publishedReports   TeachingReport[] @relation("ReportPublishedBy")
+  createdEnrollments Enrollment[]
+  auditLogs          AuditLog[]
 
   @@index([organizationId])
   @@schema("edupilot")
@@ -118,11 +136,13 @@ model Student {
   grade          String?
   contactNote    String?
   status         MemberStatus       @default(ACTIVE)
+  remainingHours Int                @default(0)
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
   parentLinks    ParentStudentLink[]
   lessonStudents LessonStudent[]
   teachingReports TeachingReport[]
+  enrollments    Enrollment[]
 
   @@unique([organizationId, studentNo])
   @@index([organizationId])
@@ -161,6 +181,7 @@ model Course {
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   classGroups    ClassGroup[]
+  enrollments    Enrollment[]
   lessonSessions LessonSession[]
 
   @@index([organizationId])
@@ -231,6 +252,7 @@ model LessonStudent {
   student          Student          @relation(fields: [studentId], references: [id])
   attendanceStatus AttendanceStatus @default(NOT_MARKED)
   attendanceNote   String?
+  hoursCharged     Boolean          @default(false)
   lastAction       String?
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
@@ -238,6 +260,31 @@ model LessonStudent {
   @@unique([lessonSessionId, studentId])
   @@index([organizationId])
   @@index([studentId])
+  @@schema("edupilot")
+}
+
+/// 一次报名或缴费。保存后把购买课时加到学员剩余课时。
+model Enrollment {
+  id             String           @id @default(cuid())
+  organizationId String
+  organization   Organization     @relation(fields: [organizationId], references: [id])
+  studentId      String
+  student        Student          @relation(fields: [studentId], references: [id])
+  courseId       String
+  course         Course           @relation(fields: [courseId], references: [id])
+  amountDue      Decimal          @db.Decimal(10, 2)
+  amount         Decimal          @db.Decimal(10, 2)
+  hoursAdded     Int
+  status         EnrollmentStatus
+  paidAt         DateTime?
+  createdById    String
+  createdBy      User             @relation(fields: [createdById], references: [id])
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([organizationId, createdAt])
+  @@index([studentId])
+  @@index([courseId])
   @@schema("edupilot")
 }
 
@@ -315,5 +362,23 @@ model TeachingReport {
   @@unique([lessonSessionId, studentId])
   @@index([organizationId, status])
   @@index([studentId])
+  @@schema("edupilot")
+}
+
+/// 关键操作的轻量记录。只保存操作人、时间和动作，不保存密码或密钥。
+model AuditLog {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  actorId        String
+  actor          User         @relation(fields: [actorId], references: [id])
+  action         String
+  targetType     String
+  targetId       String
+  detail         String?
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([actorId])
   @@schema("edupilot")
 }

@@ -20,8 +20,10 @@ export function TextField({
 }) {
   return (
     <label className="grid gap-1.5 text-xs font-bold">
-      {label}
-      {required ? " *" : ""}
+      <span>
+        {label}
+        {required ? <span className="ml-1 font-medium text-[#9a6729]">必填</span> : null}
+      </span>
       <input
         name={name}
         defaultValue={defaultValue ?? ""}

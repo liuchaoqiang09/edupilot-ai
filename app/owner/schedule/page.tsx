@@ -19,7 +19,7 @@ export default async function OwnerSchedulePage({
       include: {
         course: { select: { name: true } },
         classGroup: { select: { name: true } },
-        teacher: { select: { name: true } },
+        teacher: { select: { id: true, name: true } },
         students: {
           include: { student: { select: { name: true } } },
           orderBy: { student: { name: "asc" } },
@@ -57,6 +57,7 @@ export default async function OwnerSchedulePage({
         endLabel: formatClock(lesson.endAt),
         courseName: lesson.course.name,
         className: lesson.classGroup.name,
+        teacherId: lesson.teacher.id,
         teacherName: lesson.teacher.name,
         location: lesson.location,
         status: lesson.status,

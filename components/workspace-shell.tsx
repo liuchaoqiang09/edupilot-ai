@@ -94,7 +94,7 @@ export function WorkspaceShell({
             </div>
           </div>
           <div className="flex items-center gap-2.5">
-            <span className="rounded-full bg-[var(--teal-2)] px-2.5 py-2 text-[11px] font-bold text-[var(--teal)]">{roleLabel[area]}</span>
+            <span className="hidden rounded-full bg-[var(--teal-2)] px-2.5 py-2 text-[11px] font-bold text-[var(--teal)] sm:inline">{roleLabel[area]}</span>
             <button
               type="button"
               title="通知"
@@ -139,7 +139,7 @@ export function WorkspaceShell({
         <div className="mx-auto max-w-[1600px] px-4 py-7 md:px-10 md:py-8">{children}</div>
       </div>
       {notice ? (
-        <div className="fixed bottom-6 right-6 z-50 max-w-[340px] rounded-xl bg-[var(--navy)] px-4 py-3 text-xs text-white shadow-[0_14px_36px_rgba(24,42,53,.07)]">
+        <div className="fixed bottom-4 left-4 right-4 z-50 rounded-xl bg-[var(--navy)] px-4 py-3 text-xs text-white shadow-[0_14px_36px_rgba(24,42,53,.07)] sm:left-auto sm:max-w-[340px]">
           {notice}
         </div>
       ) : null}

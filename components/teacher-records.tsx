@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { FormEvent, useState, useTransition } from "react";
-import { generateMockReports, publishReport, saveTeachingRecord, updateReport } from "@/app/teacher/records/actions";
+import { publishReport, saveTeachingRecord, updateReport } from "@/app/teacher/records/actions";
 import { reportStatusLabel, type ReportStatusValue } from "@/lib/report-labels";
 
 export type RecordLesson = {
@@ -38,17 +38,51 @@ const fieldClass = "rounded-[10px] border border-[var(--line)] bg-white px-3 py-
 export function TeacherRecords({ lessons }: { lessons: RecordLesson[] }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [generating, setGenerating] = useState(false);
+  const [failed, setFailed] = useState(false);
   const [selectedId, setSelectedId] = useState(lessons[0]?.id ?? "");
   const [message, setMessage] = useState("");
   const selected = lessons.find((lesson) => lesson.id === selectedId) ?? null;
+  const busy = pending || generating;
 
   function run(task: () => Promise<{ ok: boolean; message?: string }>) {
     setMessage("");
+    setFailed(false);
     startTransition(async () => {
       const result = await task();
+      setFailed(!result.ok);
       setMessage(result.ok ? result.message || "已保存。" : result.message || "操作失败。");
       if (result.ok) router.refresh();
     });
+  }
+
+  async function generateAnalysis() {
+    if (!selected || busy) return;
+    setGenerating(true);
+    setMessage("");
+    setFailed(false);
+    try {
+      const response = await fetch("/api/ai/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lessonId: selected.id }),
+      });
+      const data = (await response.json().catch(() => null)) as { ok?: boolean; message?: string } | null;
+      const text = typeof data?.message === "string" ? data.message : "生成失败，教学记录已保留。请稍后重试。";
+      if (!response.ok || !data?.ok) {
+        setFailed(true);
+        setMessage(text);
+        if (text.includes("已生成")) router.refresh();
+        return;
+      }
+      setMessage(text);
+      router.refresh();
+    } catch {
+      setFailed(true);
+      setMessage("网络异常，教学记录已保留。请稍后重试。");
+    } finally {
+      setGenerating(false);
+    }
   }
 
   function saveRecord(event: FormEvent<HTMLFormElement>) {
@@ -62,7 +96,7 @@ export function TeacherRecords({ lessons }: { lessons: RecordLesson[] }) {
     <section>
       <h1 className="text-[28px] font-semibold tracking-tight">教学记录</h1>
       <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">只显示分配给你的课次。内部备注不会进入报告，也不会给家长看。</p>
-      {message ? <p className="mt-4 rounded-xl bg-[#f0f6ee] px-4 py-3 text-xs leading-6 text-[#4e6c5c]">{message}</p> : null}
+      {message ? <p className={`mt-4 rounded-xl px-4 py-3 text-xs leading-6 ${failed ? "bg-[#fff4ec] text-[#9a4b24]" : "bg-[#f0f6ee] text-[#4e6c5c]"}`}>{message}</p> : null}
       <div className="mt-6 grid items-start gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
         <div className="overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
           {lessons.length === 0 ? <p className="px-4 py-10 text-center text-xs leading-6 text-[var(--muted)]">还没有可以填写的课次。</p> : (
@@ -97,13 +131,13 @@ export function TeacherRecords({ lessons }: { lessons: RecordLesson[] }) {
                 </label>
               </div>
               <div className="mt-4 flex flex-wrap gap-2">
-                <button disabled={pending} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold disabled:opacity-60">{pending ? "正在保存…" : "保存记录"}</button>
-                <button type="button" disabled={pending || !selected.record} onClick={() => run(() => generateMockReports(selected.id))} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white disabled:opacity-60">生成 AI 分析</button>
+                <button disabled={busy} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold disabled:opacity-60">{pending ? "正在保存…" : "保存记录"}</button>
+                <button type="button" disabled={busy || !selected.record} onClick={generateAnalysis} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white disabled:opacity-60">{generating ? "正在生成…" : "生成 AI 分析"}</button>
               </div>
-              <p className="mt-3 text-xs leading-6 text-[var(--muted)]">生成按钮使用本地模拟结果，不会请求大模型。已发布的报告不会被覆盖。</p>
+              <p className="mt-3 text-xs leading-6 text-[var(--muted)]">生成时只把本节课文字发给模型，学生姓名会替换成“该同学”，内部备注不会发送。已发布的报告不会被覆盖。</p>
             </form>
             {selected.reports.map((report) => (
-              <ReportEditor key={`${report.id}-${report.status}-${report.revision}`} report={report} pending={pending} onSave={(formData) => run(() => updateReport(report.id, formData))} onPublish={() => run(() => publishReport(report.id))} />
+              <ReportEditor key={`${report.id}-${report.status}-${report.revision}`} report={report} pending={busy} onSave={(formData) => run(() => updateReport(report.id, formData))} onPublish={() => run(() => publishReport(report.id))} />
             ))}
           </div>
         ) : <p className="text-sm text-[var(--muted)]">选择一节课开始填写。</p>}
