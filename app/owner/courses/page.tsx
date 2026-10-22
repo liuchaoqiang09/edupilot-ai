@@ -13,8 +13,9 @@ export default async function CoursesPage() {
     prisma.classGroup.findMany({
       where: { organizationId: user.organizationId },
       include: {
-        course: { select: { name: true } },
-        teacher: { select: { name: true } },
+        course: { select: { id: true, name: true } },
+        teacher: { select: { id: true, name: true } },
+        _count: { select: { lessonSessions: true } },
       },
       orderBy: [{ status: "asc" }, { createdAt: "desc" }],
     }),
@@ -38,9 +39,12 @@ export default async function CoursesPage() {
       classes={classes.map((item) => ({
         id: item.id,
         name: item.name,
+        courseId: item.course.id,
         courseName: item.course.name,
+        teacherId: item.teacher.id,
         teacherName: item.teacher.name,
         capacity: item.capacity,
+        hasLessons: item._count.lessonSessions > 0,
         status: item.status,
       }))}
       courseOptions={courses.filter((course) => course.status === "ACTIVE").map((course) => ({ id: course.id, name: course.name }))}

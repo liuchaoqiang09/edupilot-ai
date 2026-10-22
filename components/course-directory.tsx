@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { FormEvent, useState, useTransition } from "react";
-import { archiveClassGroup, archiveCourse, createClassGroup, createCourse, updateCourse, type FieldErrors } from "@/app/owner/courses/actions";
+import { archiveClassGroup, archiveCourse, createClassGroup, createCourse, restoreClassGroup, restoreCourse, updateClassGroup, updateCourse, type FieldErrors } from "@/app/owner/courses/actions";
 import { FieldError, TextField } from "@/components/form-fields";
 import { Modal } from "@/components/modal";
 
@@ -21,9 +21,12 @@ export type CourseRow = {
 export type ClassRow = {
   id: string;
   name: string;
+  courseId: string;
   courseName: string;
+  teacherId: string;
   teacherName: string;
   capacity: number | null;
+  hasLessons: boolean;
   status: "ACTIVE" | "ARCHIVED";
 };
 
@@ -55,6 +58,9 @@ export function CourseDirectory({
   const [creating, setCreating] = useState<"course" | "class" | null>(null);
   const [archiving, setArchiving] = useState<{ kind: "course" | "class"; id: string; name: string } | null>(null);
   const [editing, setEditing] = useState<CourseRow | null>(null);
+  const [editingClass, setEditingClass] = useState<ClassRow | null>(null);
+  const [confirmTeacherChange, setConfirmTeacherChange] = useState<FormData | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
   const [message, setMessage] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
 
@@ -92,6 +98,34 @@ export function CourseDirectory({
     });
   }
 
+  function commitClassEdit(formData: FormData) {
+    setMessage("");
+    setFieldErrors({});
+    startTransition(async () => {
+      const result = await updateClassGroup(formData);
+      if (!result.ok) {
+        setMessage(result.message ?? "");
+        setFieldErrors(result.fieldErrors ?? {});
+        return;
+      }
+      setConfirmTeacherChange(null);
+      setEditingClass(null);
+      router.refresh();
+    });
+  }
+
+  function saveClassEdit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingClass) return;
+    const formData = new FormData(event.currentTarget);
+    const teacherId = String(formData.get("teacherId") ?? "");
+    if (editingClass.hasLessons && teacherId !== editingClass.teacherId) {
+      setConfirmTeacherChange(formData);
+      return;
+    }
+    commitClassEdit(formData);
+  }
+
   function saveClass(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
@@ -123,6 +157,21 @@ export function CourseDirectory({
     });
   }
 
+  function restore(kind: "course" | "class", id: string) {
+    setMessage("");
+    startTransition(async () => {
+      const result = kind === "course" ? await restoreCourse(id) : await restoreClassGroup(id);
+      if (!result.ok) {
+        setMessage(result.message ?? "恢复失败。");
+        return;
+      }
+      router.refresh();
+    });
+  }
+
+  const visibleCourses = courses.filter((course) => showArchived || course.status === "ACTIVE");
+  const visibleClasses = classes.filter((item) => showArchived || item.status === "ACTIVE");
+
   return (
     <section className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -143,6 +192,12 @@ export function CourseDirectory({
         </button>
       </div>
 
+      <label className="flex w-fit items-center gap-2 text-xs font-bold text-[#385058]">
+        <input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} className="accent-[var(--teal)]" />
+        显示已归档
+      </label>
+      {message ? <p className="text-xs text-[#b94d4d]">{message}</p> : null}
+
       <div className="overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[680px] border-collapse text-left text-xs">
@@ -157,21 +212,21 @@ export function CourseDirectory({
               </tr>
             </thead>
             <tbody>
-              {courses.length === 0 ? (
+              {visibleCourses.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-4 py-12 text-center leading-7 text-[var(--muted)]">
-                    还没有课程。可以先创建一门课程，再创建班级。
+                    {courses.length === 0 ? "还没有课程。可以先创建一门课程，再创建班级。" : "没有启用中的课程。勾选「显示已归档」可以查看已归档的课程。"}
                   </td>
                 </tr>
               ) : (
-                courses.map((course) => (
+                visibleCourses.map((course) => (
                   <tr key={course.id} className="border-t border-[#eef1ee]">
                     <td className="px-4 py-4 font-bold">{course.name}</td>
                     <td className="px-4 py-4 text-[var(--muted)]">{course.category ? categoryLabels[course.category] : "未分类"}</td>
                     <td className="px-4 py-4">{billingLabels[course.billingType]}</td>
                     <td className="px-4 py-4 text-[var(--muted)]">{course.description ?? "—"}</td>
                     <td className="px-4 py-4">
-                      <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${course.status === "ACTIVE" ? "bg-[#edf5f1] text-[#34725d]" : "bg-[#fff2df] text-[#9a6729]"}`}>
+                      <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${course.status === "ACTIVE" ? "bg-[#edf5f1] text-[#34725d]" : "bg-[#eef1ee] text-[#74838b]"}`}>
                         {course.status === "ACTIVE" ? "启用中" : "已归档"}
                       </span>
                     </td>
@@ -182,7 +237,11 @@ export function CourseDirectory({
                           <button type="button" className="font-bold text-[#9a6729]" onClick={() => setArchiving({ kind: "course", id: course.id, name: course.name })}>
                             归档
                           </button>
-                        ) : null}
+                        ) : (
+                          <button type="button" disabled={pending} className="font-bold text-[var(--teal)] disabled:opacity-60" onClick={() => restore("course", course.id)}>
+                            恢复
+                          </button>
+                        )}
                       </span>
                     </td>
                   </tr>
@@ -194,7 +253,13 @@ export function CourseDirectory({
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">班级</h2>
+        <div className="flex flex-wrap items-center gap-4">
+          <h2 className="text-lg font-semibold">班级</h2>
+          <label className="flex items-center gap-2 text-xs font-bold text-[#385058]">
+            <input type="checkbox" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} className="accent-[var(--teal)]" />
+            显示已归档
+          </label>
+        </div>
         <button
           type="button"
           onClick={() => {
@@ -222,31 +287,36 @@ export function CourseDirectory({
               </tr>
             </thead>
             <tbody>
-              {classes.length === 0 ? (
+              {visibleClasses.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-4 py-12 text-center leading-7 text-[var(--muted)]">
-                    还没有班级。创建时需要从已有课程和在职教师中选择。
+                    {classes.length === 0 ? "还没有班级。创建时需要从已有课程和在职教师中选择。" : "没有启用中的班级。勾选「显示已归档」可以查看已归档的班级。"}
                   </td>
                 </tr>
               ) : (
-                classes.map((item) => (
+                visibleClasses.map((item) => (
                   <tr key={item.id} className="border-t border-[#eef1ee]">
                     <td className="px-4 py-4 font-bold">{item.name}</td>
                     <td className="px-4 py-4">{item.courseName}</td>
                     <td className="px-4 py-4">{item.teacherName}</td>
                     <td className="px-4 py-4 text-[var(--muted)]">{item.capacity ?? "不限"}</td>
                     <td className="px-4 py-4">
-                      <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${item.status === "ACTIVE" ? "bg-[#edf5f1] text-[#34725d]" : "bg-[#fff2df] text-[#9a6729]"}`}>
+                      <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${item.status === "ACTIVE" ? "bg-[#edf5f1] text-[#34725d]" : "bg-[#eef1ee] text-[#74838b]"}`}>
                         {item.status === "ACTIVE" ? "启用中" : "已归档"}
                       </span>
                     </td>
                     <td className="px-4 py-4">
                       {item.status === "ACTIVE" ? (
-                        <button type="button" className="font-bold text-[#9a6729]" onClick={() => setArchiving({ kind: "class", id: item.id, name: item.name })}>
-                          归档
-                        </button>
+                        <span className="flex gap-3">
+                          <button type="button" className="font-bold text-[var(--teal)]" onClick={() => { setEditingClass(item); setFieldErrors({}); setMessage(""); }}>编辑</button>
+                          <button type="button" className="font-bold text-[#9a6729]" onClick={() => setArchiving({ kind: "class", id: item.id, name: item.name })}>
+                            归档
+                          </button>
+                        </span>
                       ) : (
-                        "—"
+                        <button type="button" disabled={pending} className="font-bold text-[var(--teal)] disabled:opacity-60" onClick={() => restore("class", item.id)}>
+                          恢复
+                        </button>
                       )}
                     </td>
                   </tr>
@@ -331,6 +401,57 @@ export function CourseDirectory({
               <button disabled={pending} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white disabled:opacity-60">{pending ? "正在保存…" : "保存"}</button>
             </div>
           </form>
+        </Modal>
+      ) : null}
+
+      {editingClass ? (
+        <Modal title="编辑班级" onClose={() => { setEditingClass(null); setConfirmTeacherChange(null); }}>
+          <form key={editingClass.id} onSubmit={saveClassEdit} className="px-5 py-5">
+            <input type="hidden" name="id" value={editingClass.id} />
+            <div className="grid gap-3">
+              <TextField label="班级名称" name="name" required defaultValue={editingClass.name} error={fieldErrors.name} />
+              <label className="grid gap-1.5 text-xs font-bold">
+                所属课程
+                <select value={editingClass.courseId} disabled className="rounded-[10px] border border-[var(--line)] bg-[#f4f6f5] px-3 py-3 text-sm font-medium text-[#74838b]">
+                  <option value={editingClass.courseId}>{editingClass.courseName}</option>
+                </select>
+              </label>
+              <label className="grid gap-1.5 text-xs font-bold">
+                主讲教师 <span className="font-medium text-[#9a6729]">必填</span>
+                <select name="teacherId" defaultValue={editingClass.teacherId} required className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]">
+                  {teacherOptions.some((teacher) => teacher.id === editingClass.teacherId) ? null : (
+                    <option value={editingClass.teacherId}>{editingClass.teacherName}</option>
+                  )}
+                  {teacherOptions.map((teacher) => (
+                    <option key={teacher.id} value={teacher.id}>{teacher.name}</option>
+                  ))}
+                </select>
+                <FieldError message={fieldErrors.teacherId} />
+              </label>
+              <TextField label="容量" name="capacity" defaultValue={editingClass.capacity == null ? "" : String(editingClass.capacity)} placeholder="选填，例如 20" error={fieldErrors.capacity} />
+            </div>
+            {message ? <p className="mt-3 text-xs text-[#b94d4d]">{message}</p> : null}
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setEditingClass(null)} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold">取消</button>
+              <button disabled={pending} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white disabled:opacity-60">
+                {pending ? "正在保存…" : "保存"}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      ) : null}
+
+      {confirmTeacherChange ? (
+        <Modal title="修改主讲教师" onClose={() => setConfirmTeacherChange(null)}>
+          <div className="px-5 py-5 text-sm leading-7 text-[var(--muted)]">
+            该班级已有排课记录，修改主讲教师只影响未来新建的课次，不会更改历史课次。
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setConfirmTeacherChange(null)} className="rounded-[10px] border border-[var(--line)] px-3.5 py-2.5 text-xs font-bold">取消</button>
+              <button type="button" disabled={pending} onClick={() => commitClassEdit(confirmTeacherChange)} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white disabled:opacity-60">
+                {pending ? "正在保存…" : "继续保存"}
+              </button>
+            </div>
+          </div>
         </Modal>
       ) : null}
 

@@ -25,7 +25,7 @@ export default async function ParentSchedulePage({
           lessonSession: { startAt: { gte: range.start, lt: range.end } },
         },
         include: {
-          student: { select: { name: true } },
+          student: { select: { name: true, status: true } },
           lessonSession: {
             include: {
               course: { select: { name: true } },
@@ -37,6 +37,8 @@ export default async function ParentSchedulePage({
         orderBy: { lessonSession: { startAt: "asc" } },
       })
     : [];
+  const now = Date.now();
+  const visibleRows = rows.filter((row) => row.student.status === "ACTIVE" || row.lessonSession.startAt.getTime() <= now);
 
   return (
     <section>
@@ -52,11 +54,11 @@ export default async function ParentSchedulePage({
         <span className="text-xs text-[var(--muted)]">{formatDateLabel(date)}</span>
       </div>
       <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
-        {rows.length === 0 ? (
+        {visibleRows.length === 0 ? (
           <p className="px-5 py-12 text-center leading-7 text-[var(--muted)]">这一天没有已绑定孩子的课次。</p>
         ) : (
           <ul className="px-5">
-            {rows.map((row) => (
+            {visibleRows.map((row) => (
               <li key={row.id} className="grid grid-cols-[64px_4px_minmax(0,1fr)_auto] items-center gap-3 border-b border-[#f0f2f0] py-4 last:border-b-0">
                 <div className="text-xs font-extrabold">
                   {formatClock(row.lessonSession.startAt)}

@@ -14,6 +14,7 @@ export type ShellUser = {
 };
 
 function isActive(pathname: string, href: string, area: WorkspaceArea) {
+  if (area === "owner" && href === "/owner/stats" && pathname.startsWith("/owner/attendance")) return true;
   if (href === `/${area}`) return pathname === href;
   return pathname === href || pathname.startsWith(`${href}/`);
 }

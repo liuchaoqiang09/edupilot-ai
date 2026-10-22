@@ -1,11 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { MemberStatus } from "@prisma/client";
+import { MemberStatus, Prisma } from "@prisma/client";
 import { requireRole } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { validateTeacherFields, type TeacherFieldErrors } from "@/lib/teacher-fields";
 
-export type FieldErrors = Partial<Record<"name" | "contact" | "link", string>>;
+export type FieldErrors = TeacherFieldErrors;
 
 export type ActionResult = {
   ok: boolean;
@@ -18,16 +19,22 @@ function clean(value: FormDataEntryValue | null) {
 }
 
 function validateTeacher(formData: FormData) {
-  const fieldErrors: FieldErrors = {};
-  const name = clean(formData.get("name"));
-  const contact = clean(formData.get("contact"));
-  const link = clean(formData.get("link")) === "1";
+  return validateTeacherFields({
+    name: clean(formData.get("name")),
+    phone: clean(formData.get("phone")),
+    wechat: clean(formData.get("wechat")),
+  });
+}
 
-  if (!name) fieldErrors.name = "请填写教师姓名。";
-  else if (name.length > 40) fieldErrors.name = "姓名不能超过 40 个字。";
-  if (contact.length > 80) fieldErrors.contact = "联系方式不能超过 80 个字。";
-
-  return { fieldErrors, data: { name, contact: contact || null, link } };
+async function selectedCourseIds(organizationId: string, formData: FormData) {
+  const ids = [...new Set(formData.getAll("courseIds").filter((value): value is string => typeof value === "string" && value.length > 0))];
+  if (ids.length === 0) return { ids, error: null as string | null };
+  const found = await prisma.course.findMany({
+    where: { id: { in: ids }, organizationId },
+    select: { id: true },
+  });
+  if (found.length !== ids.length) return { ids: [], error: "有课程不属于当前机构。" };
+  return { ids, error: null };
 }
 
 function refreshTeachers() {
@@ -38,11 +45,18 @@ function refreshTeachers() {
 export async function createTeacher(formData: FormData): Promise<ActionResult> {
   const user = await requireRole("OWNER", "owner");
   const { fieldErrors, data } = validateTeacher(formData);
-  if (data.link) fieldErrors.link = "新老师默认暂不关联。保存档案后，把邀请码发给对方，注册成功会自动关联。";
+  const courses = await selectedCourseIds(user.organizationId, formData);
+  if (courses.error) fieldErrors.courses = courses.error;
   if (Object.keys(fieldErrors).length > 0) return { ok: false, fieldErrors };
 
   await prisma.teacher.create({
-    data: { organizationId: user.organizationId, name: data.name, contact: data.contact },
+    data: {
+      organizationId: user.organizationId,
+      name: data.name,
+      phone: data.phone,
+      wechat: data.wechat,
+      courses: { create: courses.ids.map((courseId) => ({ courseId })) },
+    },
   });
   refreshTeachers();
   return { ok: true };
@@ -52,37 +66,71 @@ export async function updateTeacher(id: string, formData: FormData): Promise<Act
   const user = await requireRole("OWNER", "owner");
   const existing = await prisma.teacher.findFirst({
     where: { id, organizationId: user.organizationId },
-    select: { id: true, accountUserId: true },
+    select: { id: true },
   });
   if (!existing) return { ok: false, message: "找不到这位教师，或你无权修改。" };
 
   const { fieldErrors, data } = validateTeacher(formData);
-  if (data.link && !existing.accountUserId) {
-    fieldErrors.link = "这位老师还没有注册。把邀请码发给对方后会自动关联，密码只有老师自己知道。";
-  }
+  const courses = await selectedCourseIds(user.organizationId, formData);
+  if (courses.error) fieldErrors.courses = courses.error;
   if (Object.keys(fieldErrors).length > 0) return { ok: false, fieldErrors };
 
-  let userId: string | null = null;
-  if (data.link && existing.accountUserId) {
-    const account = await prisma.user.findFirst({
-      where: { id: existing.accountUserId, organizationId: user.organizationId, roles: { has: "TEACHER" } },
-      select: { id: true },
+  const updated = await prisma.$transaction(async (tx) => {
+    const result = await tx.teacher.updateMany({
+      where: { id, organizationId: user.organizationId },
+      data: { name: data.name, phone: data.phone, wechat: data.wechat },
     });
-    if (!account) return { ok: false, fieldErrors: { link: "这位老师的登录账号已不在本机构。" } };
-    const taken = await prisma.teacher.findFirst({
-      where: { userId: account.id, NOT: { id } },
-      select: { id: true },
-    });
-    if (taken) return { ok: false, fieldErrors: { link: "这个登录账号已经关联了其他教师。" } };
-    userId = account.id;
-  }
-
-  const updated = await prisma.teacher.updateMany({
-    where: { id, organizationId: user.organizationId },
-    data: { name: data.name, contact: data.contact, userId },
+    if (result.count !== 1) return result;
+    await tx.teacherCourse.deleteMany({ where: { teacherId: id, teacher: { organizationId: user.organizationId } } });
+    if (courses.ids.length > 0) {
+      await tx.teacherCourse.createMany({ data: courses.ids.map((courseId) => ({ teacherId: id, courseId })) });
+    }
+    return result;
   });
   if (updated.count !== 1) return { ok: false, message: "找不到这位教师，或你无权修改。" };
 
+  refreshTeachers();
+  return { ok: true };
+}
+
+export async function linkTeacherAccount(id: string): Promise<ActionResult> {
+  const user = await requireRole("OWNER", "owner");
+  const existing = await prisma.teacher.findFirst({
+    where: { id, organizationId: user.organizationId },
+    select: { id: true, accountUserId: true },
+  });
+  if (!existing) return { ok: false, message: "找不到这位教师，或你无权修改。" };
+  if (!existing.accountUserId) return { ok: false, fieldErrors: { link: "这位老师还没有注册。请先生成邀请码。" } };
+
+  const account = await prisma.user.findFirst({
+    where: { id: existing.accountUserId, organizationId: user.organizationId, roles: { has: "TEACHER" } },
+    select: { id: true },
+  });
+  if (!account) return { ok: false, fieldErrors: { link: "这位老师的登录账号已不在本机构。" } };
+  const taken = await prisma.teacher.findFirst({
+    where: { userId: account.id, NOT: { id } },
+    select: { id: true },
+  });
+  if (taken) return { ok: false, fieldErrors: { link: "这个登录账号已经关联了其他教师。" } };
+
+  try {
+    const result = await prisma.teacher.updateMany({
+      where: { id, organizationId: user.organizationId, userId: null },
+      data: { userId: account.id },
+    });
+    if (result.count !== 1) {
+      const linked = await prisma.teacher.findFirst({
+        where: { id, organizationId: user.organizationId, userId: account.id },
+        select: { id: true },
+      });
+      if (!linked) return { ok: false, fieldErrors: { link: "关联没有完成。请刷新后再试。" } };
+    }
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return { ok: false, fieldErrors: { link: "这个登录账号已经关联了其他教师。" } };
+    }
+    throw error;
+  }
   refreshTeachers();
   return { ok: true };
 }

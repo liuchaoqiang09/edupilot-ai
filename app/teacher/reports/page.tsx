@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireRole } from "@/lib/auth";
 import { formatClock, formatDateLabel, shanghaiDateKey } from "@/lib/datetime";
 import { reportStatusLabel } from "@/lib/report-labels";
@@ -26,12 +27,14 @@ export default async function TeacherReportsPage() {
         {reports.length === 0 ? <p className="px-4 py-12 text-center text-sm text-[var(--muted)]">还没有报告。</p> : (
           <ul>
             {reports.map((report) => (
-              <li key={report.id} className="flex flex-wrap items-center justify-between gap-3 border-t border-[#eef1ee] px-4 py-4 first:border-t-0">
-                <div>
-                  <div className="text-sm font-bold">{report.student.name} · {report.lessonSession.title ?? "课次"}</div>
-                  <div className="mt-1 text-xs text-[var(--muted)]">{formatDateLabel(shanghaiDateKey(report.lessonSession.startAt))} {formatClock(report.lessonSession.startAt)}</div>
-                </div>
-                <span className="rounded-full bg-[#edf5f1] px-2 py-1 text-[10px] font-bold text-[#34725d]">{reportStatusLabel[report.status]}</span>
+              <li key={report.id} className="border-t border-[#eef1ee] first:border-t-0">
+                <Link href={`/teacher/records?lesson=${report.lessonSessionId}&report=${report.id}`} className="flex flex-wrap items-center justify-between gap-3 px-4 py-4 transition hover:bg-[#f4faf7]">
+                  <div>
+                    <div className="text-sm font-bold">{report.student.name} · {report.lessonSession.title ?? "课次"}</div>
+                    <div className="mt-1 text-xs text-[var(--muted)]">{formatDateLabel(shanghaiDateKey(report.lessonSession.startAt))} {formatClock(report.lessonSession.startAt)}</div>
+                  </div>
+                  <span className="rounded-full bg-[#edf5f1] px-2 py-1 text-[10px] font-bold text-[#34725d]">{reportStatusLabel[report.status]}</span>
+                </Link>
               </li>
             ))}
           </ul>

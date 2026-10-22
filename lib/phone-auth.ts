@@ -226,27 +226,37 @@ export async function registerPhone(db: Db, rawTicket: string, rawName: string, 
   if (!row || row.expiresAt.getTime() <= now.getTime() || !sameHash(row.codeHash, hashSecret(row.phone, secret))) {
     return { ok: false as const, status: 400, message: "注册凭证已失效，请重新验证手机号。" };
   }
-  const consumed = await db.phoneVerification.updateMany({
-    where: { id: row.id, consumedAt: null },
-    data: { consumedAt: now },
-  });
-  if (consumed.count !== 1) return { ok: false as const, status: 400, message: "注册凭证已失效，请重新验证手机号。" };
-
   const existing = await db.user.findUnique({ where: { phone: row.phone }, select: { id: true } });
   if (existing) return { ok: false as const, status: 409, message: "这个手机号已有账号，请直接登录。" };
-  try {
-    await db.phoneSignup.create({ data: { phone: row.phone, name } });
-  } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      return { ok: false as const, status: 409, message: "这个手机号已经登记过。" };
-    }
-    throw error;
+  const signup = await db.phoneSignup.findUnique({ where: { phone: row.phone }, select: { id: true } });
+  if (signup) {
+    return {
+      ok: true as const,
+      status: 200,
+      ticket: await createActionTicket(db, row.phone, now),
+      message: "这个手机号已经登记。你可以创建机构，或输入负责人发给你的邀请码。",
+    };
   }
-  const actionTicket = await createActionTicket(db, row.phone, now);
+
+  try {
+    const saved = await (db as PrismaClient).$transaction(async (tx) => {
+      const consumed = await tx.phoneVerification.updateMany({
+        where: { id: row.id, consumedAt: null },
+        data: { consumedAt: now },
+      });
+      if (consumed.count !== 1) return false;
+      await tx.phoneSignup.create({ data: { phone: row.phone, name } });
+      return true;
+    });
+    if (!saved) return { ok: false as const, status: 400, message: "注册凭证已失效，请重新验证手机号。" };
+  } catch (error) {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") throw error;
+  }
+
   return {
     ok: true as const,
     status: 200,
-    ticket: actionTicket,
+    ticket: await createActionTicket(db, row.phone, now),
     message: "已登记。登记本身没有机构角色。你可以创建机构，或输入负责人发给你的邀请码。",
   };
 }

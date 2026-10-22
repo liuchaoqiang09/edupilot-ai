@@ -74,23 +74,23 @@ export async function seedDemoOrganization(prisma) {
     data: { organizationId: organization.id, email: "demo_owner@edupilot.test", name: "周校长", passwordHash, roles: ["OWNER"] },
   });
   const teacherUser = await prisma.user.create({
-    data: { organizationId: organization.id, email: "demo_teacher@edupilot.test", name: "王老师", passwordHash, roles: ["TEACHER"] },
+    data: { organizationId: organization.id, email: "demo_teacher@edupilot.test", name: "王建国", passwordHash, roles: ["TEACHER"] },
   });
   const parent = await prisma.user.create({
     data: { organizationId: organization.id, email: "demo_parent@edupilot.test", name: "林子涵家长", passwordHash, roles: ["PARENT"] },
   });
 
   const wang = await prisma.teacher.create({
-    data: { organizationId: organization.id, name: "王老师", contact: "数学", userId: teacherUser.id, accountUserId: teacherUser.id, createdAt: onDay(shiftKey(today, -40), 9, 0) },
+    data: { organizationId: organization.id, name: "王建国", phone: "13800001001", wechat: "wang_jg", userId: teacherUser.id, accountUserId: teacherUser.id, createdAt: onDay(shiftKey(today, -40), 9, 0) },
   });
   const zhao = await prisma.teacher.create({
-    data: { organizationId: organization.id, name: "赵老师", contact: "数学，周末兼带美术", createdAt: onDay(shiftKey(today, -38), 9, 0) },
+    data: { organizationId: organization.id, name: "赵明", phone: "13800001002", createdAt: onDay(shiftKey(today, -38), 9, 0) },
   });
   const sun = await prisma.teacher.create({
-    data: { organizationId: organization.id, name: "孙老师", contact: "英语", createdAt: onDay(shiftKey(today, -36), 9, 0) },
+    data: { organizationId: organization.id, name: "孙悦", phone: "13800001003", createdAt: onDay(shiftKey(today, -36), 9, 0) },
   });
   const li = await prisma.teacher.create({
-    data: { organizationId: organization.id, name: "李老师", contact: "钢琴", createdAt: onDay(shiftKey(today, -30), 9, 0) },
+    data: { organizationId: organization.id, name: "李小红", phone: "13800001004", createdAt: onDay(shiftKey(today, -30), 9, 0) },
   });
 
   const studentRows = [
@@ -143,6 +143,16 @@ export async function seedDemoOrganization(prisma) {
     piano: await prisma.classGroup.create({ data: { organizationId: organization.id, name: "少儿钢琴启蒙小班", courseId: piano.id, teacherId: li.id, capacity: 6 } }),
     art: await prisma.classGroup.create({ data: { organizationId: organization.id, name: "创意美术周末班", courseId: art.id, teacherId: zhao.id, capacity: 10 } }),
   };
+
+  await prisma.teacherCourse.createMany({
+    data: [
+      { teacherId: wang.id, courseId: math.id },
+      { teacherId: zhao.id, courseId: math.id },
+      { teacherId: zhao.id, courseId: art.id },
+      { teacherId: sun.id, courseId: english.id },
+      { teacherId: li.id, courseId: piano.id },
+    ],
+  });
 
   async function addLesson({ classGroup, course, teacher, title, start, end, location, status, roster }) {
     const lesson = await prisma.lessonSession.create({
@@ -429,27 +439,28 @@ export async function seedDemoOrganization(prisma) {
   });
 
   const purchases = [
-    [students["林子涵"], math, "4800.00", "4800.00", 24, 20, "2026-10-03"],
-    [students["陈可欣"], math, "3600.00", "3600.00", 16, 13, "2026-10-06"],
-    [students["苏晚宁"], piano, "3200.00", "3200.00", 16, 14, "2026-10-13"],
-    [students["何知夏"], piano, "2400.00", "2400.00", 12, 11, "2026-10-20"],
-    [students["沈清禾"], art, "1800.00", "1800.00", 12, 11, "2026-10-21"],
-    [students["顾星野"], art, "1800.00", "1800.00", 12, 10, "2026-09-18"],
-    [students["顾星野"], math, "2400.00", "2400.00", 12, 11, "2026-10-12"],
-    [students["郑一鸣"], math, "2600.00", "2600.00", 10, 6, "2026-10-21"],
+    [students["林子涵"], math, classes.mathA, "4800.00", "4800.00", 24, 20, "2026-10-03"],
+    [students["陈可欣"], math, classes.mathA, "3600.00", "3600.00", 16, 13, "2026-10-06"],
+    [students["苏晚宁"], piano, classes.piano, "3200.00", "3200.00", 16, 14, "2026-10-13"],
+    [students["何知夏"], piano, classes.piano, "2400.00", "2400.00", 12, 11, "2026-10-20"],
+    [students["沈清禾"], art, classes.art, "1800.00", "1800.00", 12, 11, "2026-10-21"],
+    [students["顾星野"], art, classes.art, "1800.00", "1800.00", 12, 10, "2026-09-18"],
+    [students["顾星野"], math, classes.mathB, "2400.00", "2400.00", 12, 11, "2026-10-12"],
+    [students["郑一鸣"], math, classes.mathB, "2600.00", "2600.00", 10, 6, "2026-10-21"],
   ];
   const periods = [
-    [students["周予安"], english, "4200.00", "4200.00", "2026-08-01", "2027-01-31", "2026-10-11"],
-    [students["许沐阳"], english, "4200.00", "3000.00", "2026-08-01", "2027-01-31", "2026-10-18"],
-    [students["江晚晴"], english, "2100.00", "2100.00", "2026-03-01", "2026-09-30", "2026-09-08"],
+    [students["周予安"], english, classes.english, "4200.00", "4200.00", "2026-08-01", "2027-01-31", "2026-10-11"],
+    [students["许沐阳"], english, classes.english, "4200.00", "3000.00", "2026-08-01", "2027-01-31", "2026-10-18"],
+    [students["江晚晴"], english, classes.english, "2100.00", "2100.00", "2026-03-01", "2026-09-30", "2026-09-08"],
   ];
-  for (const [student, course, due, paid, hoursAdded, remaining, day] of purchases) {
+  for (const [student, course, classGroup, due, paid, hoursAdded, remaining, day] of purchases) {
     const paidAt = onDay(day, 11, 30);
     await prisma.enrollment.create({
       data: {
         organizationId: organization.id,
         studentId: student.id,
         courseId: course.id,
+        classGroupId: classGroup.id,
         amountDue: due,
         amount: paid,
         hoursAdded,
@@ -471,13 +482,14 @@ export async function seedDemoOrganization(prisma) {
       },
     });
   }
-  for (const [student, course, due, paid, start, end, day] of periods) {
+  for (const [student, course, classGroup, due, paid, start, end, day] of periods) {
     const paidAt = onDay(day, 11, 30);
     await prisma.enrollment.create({
       data: {
         organizationId: organization.id,
         studentId: student.id,
         courseId: course.id,
+        classGroupId: classGroup.id,
         amountDue: due,
         amount: paid,
         hoursAdded: 0,

@@ -148,6 +148,8 @@ model Student {
   grade          String?
   contactNote    String?
   status         MemberStatus       @default(ACTIVE)
+  /// 停用时填写的原因。恢复在读后清空。
+  archiveReason  String?
   /// 旧的学员总课时。新的扣课以 CourseHourBalance 为准，不再读写这个字段。
   remainingHours Int                @default(0)
   createdAt      DateTime           @default(now())
@@ -175,7 +177,10 @@ model Teacher {
   accountUserId  String?      @unique
   accountUser    User?        @relation("TeacherAccount", fields: [accountUserId], references: [id], onDelete: SetNull)
   name           String
-  contact        String?
+  /// 11 位手机号。空表示未填写。
+  phone          String?
+  /// 微信号，只含字母、数字和下划线。
+  wechat         String?
   status         MemberStatus @default(ACTIVE)
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
@@ -183,6 +188,7 @@ model Teacher {
   lessonSessions LessonSession[]
   teachingRecords TeachingRecord[]
   membershipInvites MembershipInvite[]
+  courses        TeacherCourse[]
 
   @@index([organizationId])
   @@schema("edupilot")
@@ -201,11 +207,24 @@ model Course {
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   classGroups    ClassGroup[]
+  teachers       TeacherCourse[]
   enrollments    Enrollment[]
   lessonSessions LessonSession[]
   courseHourBalances CourseHourBalance[]
 
   @@index([organizationId])
+  @@schema("edupilot")
+}
+
+/// 教师可教授的课程。同一对教师和课程只保留一条。
+model TeacherCourse {
+  teacherId String
+  courseId  String
+  teacher   Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+  course    Course  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@id([teacherId, courseId])
+  @@index([courseId])
   @@schema("edupilot")
 }
 
@@ -225,6 +244,7 @@ model ClassGroup {
   updatedAt      DateTime      @updatedAt
 
   lessonSessions LessonSession[]
+  enrollments    Enrollment[]
 
   @@index([organizationId])
   @@index([courseId])
@@ -311,6 +331,9 @@ model Enrollment {
   student        Student          @relation(fields: [studentId], references: [id])
   courseId       String
   course         Course           @relation(fields: [courseId], references: [id])
+  /// 报名所在班级。旧数据可先留空，排课按这个字段取本班学生。
+  classGroupId   String?
+  classGroup     ClassGroup?      @relation(fields: [classGroupId], references: [id], onDelete: SetNull)
   amountDue      Decimal          @db.Decimal(10, 2)
   amount         Decimal          @db.Decimal(10, 2)
   hoursAdded     Int
@@ -327,6 +350,7 @@ model Enrollment {
   @@index([organizationId, createdAt])
   @@index([studentId])
   @@index([courseId])
+  @@index([classGroupId])
   @@schema("edupilot")
 }
 

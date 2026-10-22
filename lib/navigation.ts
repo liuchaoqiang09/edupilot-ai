@@ -33,7 +33,8 @@ export const navigation: Record<WorkspaceArea, NavItem[]> = {
     { href: "/owner/account", label: "账号管理", icon: "☺", description: "查看自己的登录账号并修改自己的密码。不能修改老师或家长的密码。" },
   ],
   teacher: [
-    { href: "/teacher", label: "我的课表", icon: "▤", description: "只显示分配给当前教师的课次。" },
+    { href: "/teacher", label: "总览", icon: "◫", description: "查看今天的课次、待填写记录和已发布报告。" },
+    { href: "/teacher/schedule", label: "我的课表", icon: "▤", description: "只显示分配给当前教师的课次。" },
     { href: "/teacher/students", label: "我的学生", icon: "♙", description: "只显示本人授课范围内的学生。" },
     { href: "/teacher/records", label: "教学记录", icon: "✎", description: "记录本节课的内容、表现、问题和作业。" },
     { href: "/teacher/reports", label: "教学报告", icon: "✳", description: "编辑 AI 草稿，确认后再发布给家长。" },
@@ -64,6 +65,9 @@ export const helpText: Record<WorkspaceArea, { title: string; body: string }> = 
 };
 
 export function pageMeta(area: WorkspaceArea, pathname: string) {
+  if (area === "owner" && pathname.startsWith("/owner/attendance")) {
+    return navigation.owner.find((entry) => entry.href === "/owner/stats") ?? navigation.owner[0];
+  }
   const item = navigation[area].find((entry) =>
     entry.href === `/${area}` ? pathname === entry.href : pathname === entry.href || pathname.startsWith(`${entry.href}/`),
   );

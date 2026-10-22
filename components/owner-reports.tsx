@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useMemo, useState, useTransition } from "react";
+import { FormEvent, useState, useTransition } from "react";
 import { returnReport } from "@/app/owner/reports/actions";
 import { Modal } from "@/components/modal";
 import { reportStatusLabel, type ReportStatusValue } from "@/lib/report-labels";
@@ -25,13 +26,7 @@ export type OwnerReportRow = {
   privateNote: string | null;
 };
 
-const filters: { value: "" | ReportStatusValue; label: string }[] = [
-  { value: "", label: "全部状态" },
-  { value: "DRAFT", label: "草稿" },
-  { value: "CONFIRMED", label: "已确认" },
-  { value: "PUBLISHED", label: "已发布" },
-  { value: "RETURNED", label: "已退回" },
-];
+const filters = ["", "待确认", "草稿", "已确认", "已发布", "已退回"] as const;
 
 function statusClass(status: ReportStatusValue) {
   if (status === "PUBLISHED") return "bg-[#edf5f1] text-[#34725d]";
@@ -42,22 +37,22 @@ function statusClass(status: ReportStatusValue) {
 export function OwnerReports({
   reports,
   counts,
+  statusFilter = null,
 }: {
   reports: OwnerReportRow[];
   counts: { generatedThisWeek: number; pending: number; returned: number; published: number };
+  statusFilter?: (typeof filters)[number] | null;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [filter, setFilter] = useState<"" | ReportStatusValue>("");
   const [selectedId, setSelectedId] = useState(reports[0]?.id ?? "");
   const [returning, setReturning] = useState(false);
   const [message, setMessage] = useState("");
+  const selected = reports.find((report) => report.id === selectedId) ?? reports[0] ?? null;
 
-  const visible = useMemo(
-    () => reports.filter((report) => !filter || report.status === filter),
-    [reports, filter],
-  );
-  const selected = visible.find((report) => report.id === selectedId) ?? visible[0] ?? null;
+  function changeStatus(value: string) {
+    router.push(value ? `/owner/reports?status=${encodeURIComponent(value)}` : "/owner/reports");
+  }
 
   function refresh() {
     router.refresh();
@@ -83,6 +78,14 @@ export function OwnerReports({
     <section>
       <h1 className="text-[28px] font-semibold tracking-tight">AI 教学报告</h1>
       <p className="mt-2 max-w-3xl leading-7 text-[var(--muted)]">查看本机构的教学报告。负责人可以退回并填写原因，发布由授课教师完成。</p>
+      {statusFilter ? (
+        <p className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+          <span className="rounded-full bg-[var(--teal-2)] px-2.5 py-1 font-bold text-[var(--teal)]">
+            当前正在筛选：{statusFilter === "待确认" ? "待确认（草稿、已确认、已退回）" : statusFilter}
+          </span>
+          <Link href="/owner/reports" className="font-bold text-[var(--teal)]">重置</Link>
+        </p>
+      ) : null}
       <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Stat label="本周已生成" value={counts.generatedThisWeek} hint="按生成时间统计" />
         <Stat label="待教师确认" value={counts.pending} hint="草稿和已确认、尚未发布" />
@@ -97,16 +100,16 @@ export function OwnerReports({
               <p className="mt-1 text-[11px] text-[var(--muted)]">点击查看分析内容与依据</p>
             </div>
             <select
-              value={filter}
-              onChange={(event) => setFilter(event.target.value as "" | ReportStatusValue)}
+              value={statusFilter ?? ""}
+              onChange={(event) => changeStatus(event.target.value)}
               className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold"
             >
-              {filters.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+              {filters.map((item) => <option key={item || "all"} value={item}>{item || "全部状态"}</option>)}
             </select>
           </div>
-          {visible.length === 0 ? <p className="px-4 py-12 text-center text-sm text-[var(--muted)]">没有符合条件的报告。</p> : (
+          {reports.length === 0 ? <p className="px-4 py-12 text-center text-sm text-[var(--muted)]">没有符合条件的报告。</p> : (
             <div>
-              {visible.map((report) => (
+              {reports.map((report) => (
                 <button
                   key={report.id}
                   type="button"

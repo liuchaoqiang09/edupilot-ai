@@ -1,7 +1,7 @@
 import { createHmac, randomBytes, randomInt } from "crypto";
 import bcrypt from "bcryptjs";
 import { Prisma, PrismaClient } from "@prisma/client";
-import { consumePhoneCode, openActionTicket } from "./phone-auth";
+import { consumePhoneCode, normalizeMainlandPhone, openActionTicket } from "./phone-auth";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -44,18 +44,31 @@ export async function bindUserPhone(
   const matched = await bcrypt.compare(password, user.passwordHash);
   if (!matched) return { ok: false as const, status: 401, message: "密码不正确。" };
 
-  return db.$transaction(async (tx) => {
-    const proof = await consumePhoneCode(tx, rawPhone, rawCode, now);
-    if (!proof.ok) return proof;
-    const taken = await tx.user.findUnique({ where: { phone: proof.phone }, select: { id: true } });
+  const phone = normalizeMainlandPhone(rawPhone);
+  if (phone) {
+    const taken = await db.user.findUnique({ where: { phone }, select: { id: true } });
     if (taken) return { ok: false as const, status: 409, message: "这个手机号已经绑定了其他账号。" };
-    const updated = await tx.user.updateMany({
-      where: { id: user.id, phone: null, organizationId: user.organizationId },
-      data: { phone: proof.phone },
+  }
+
+  try {
+    return await db.$transaction(async (tx) => {
+      const proof = await consumePhoneCode(tx, rawPhone, rawCode, now);
+      if (!proof.ok) return proof;
+      const stillTaken = await tx.user.findUnique({ where: { phone: proof.phone }, select: { id: true } });
+      if (stillTaken) throw new Error("PHONE_TAKEN");
+      const updated = await tx.user.updateMany({
+        where: { id: user.id, phone: null, organizationId: user.organizationId },
+        data: { phone: proof.phone },
+      });
+      if (updated.count !== 1) throw new Error("PHONE_TAKEN");
+      return { ok: true as const, status: 200, phone: proof.phone, message: "手机号已绑定。之后可以用验证码登录这个账号。" };
     });
-    if (updated.count !== 1) return { ok: false as const, status: 409, message: "手机号绑定没有完成。" };
-    return { ok: true as const, status: 200, phone: proof.phone, message: "手机号已绑定。之后可以用验证码登录这个账号。" };
-  });
+  } catch (error) {
+    if (error instanceof Error && error.message === "PHONE_TAKEN") {
+      return { ok: false as const, status: 409, message: "这个手机号已经绑定了其他账号。" };
+    }
+    throw error;
+  }
 }
 
 export async function createTeacherInvite(
@@ -72,7 +85,7 @@ export async function createTeacherInvite(
     });
     if (!teacher) return { ok: false as const, message: "找不到这位教师，或你无权为其他机构生成邀请码。" };
     if (teacher.userId || teacher.accountUserId) {
-      return { ok: false as const, message: "这位老师已经有登录账号。在编辑里选择「关联账号」即可。" };
+      return { ok: false as const, message: "这位老师已经有登录账号。在编辑里点「关联已有账号」即可。" };
     }
     teacherId = teacher.id;
   }
@@ -197,13 +210,28 @@ export async function redeemMembershipInvite(db: PrismaClient, rawTicket: string
         const signup = await tx.phoneSignup.findUnique({ where: { phone: ticket.phone }, select: { id: true } });
         if (!signup) return { ok: false as const, status: 400, message: "请先完成手机号登记。" };
       }
+      if (invite.kind === "TEACHER" && invite.teacherId) {
+        const teacher = await tx.teacher.findFirst({
+          where: { id: invite.teacherId, organizationId: invite.organizationId },
+          select: { id: true, userId: true, accountUserId: true },
+        });
+        const reserved = current
+          ? await tx.teacher.findFirst({
+              where: { organizationId: invite.organizationId, OR: [{ userId: current.id }, { accountUserId: current.id }] },
+              select: { id: true },
+            })
+          : null;
+        if (!teacher || teacher.userId || teacher.accountUserId || (reserved && reserved.id !== teacher.id)) {
+          return { ok: false as const, status: 400, message: "邀请码已失效。" };
+        }
+      }
       const consumedInvite = await tx.membershipInvite.updateMany({
         where: { id: invite.id, consumedAt: null, organizationId: invite.organizationId },
         data: { consumedAt: now },
       });
       if (consumedInvite.count !== 1) return { ok: false as const, status: 400, message: "邀请码不正确或已经使用。" };
       const consumedTicket = await tx.phoneVerification.updateMany({ where: { id: ticket.id, consumedAt: null }, data: { consumedAt: now } });
-      if (consumedTicket.count !== 1) return { ok: false as const, status: 400, message: "凭证已失效，请重新验证手机号。" };
+      if (consumedTicket.count !== 1) throw new Error("TICKET_STALE");
 
       if (invite.kind === "TEACHER") {
         const user = current ?? (await accountFromSignup(tx, ticket.phone, invite.organizationId, ["TEACHER"]));
@@ -221,7 +249,7 @@ export async function redeemMembershipInvite(db: PrismaClient, rawTicket: string
             select: { id: true, userId: true, accountUserId: true },
           });
           if (!teacher || teacher.userId || teacher.accountUserId || (reserved && reserved.id !== teacher.id)) {
-            return { ok: false as const, status: 400, message: "邀请码已失效。" };
+            throw new Error("INVITE_STALE");
           }
           await tx.teacher.update({
             where: { id: teacher.id },
@@ -254,6 +282,12 @@ export async function redeemMembershipInvite(db: PrismaClient, rawTicket: string
       return { ok: true as const, status: 200, user: saved, message: "已绑定孩子并成为家长。" };
     });
   } catch (error) {
+    if (error instanceof Error && error.message === "INVITE_STALE") {
+      return { ok: false as const, status: 400, message: "邀请码已失效。" };
+    }
+    if (error instanceof Error && error.message === "TICKET_STALE") {
+      return { ok: false as const, status: 400, message: "凭证已失效，请重新验证手机号。" };
+    }
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       return { ok: false as const, status: 409, message: "这个关系已经存在。" };
     }

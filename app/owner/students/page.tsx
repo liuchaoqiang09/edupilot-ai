@@ -9,11 +9,12 @@ const studentSortFields = ["name", "studentNo"] as const;
 export default async function StudentsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; sortBy?: string | string[]; order?: string | string[] }>;
+  searchParams: Promise<{ q?: string; status?: string; sortBy?: string | string[]; order?: string | string[] }>;
 }) {
   const user = await requireRole("OWNER", "owner");
   const params = await searchParams;
   const query = params.q?.trim() ?? "";
+  const statusFilter = params.status === "在读" || params.status === "已停用" ? params.status : null;
   const sort = readSort(params.sortBy, params.order, studentSortFields);
   const orderBy: Prisma.StudentOrderByWithRelationInput[] = sort
     ? [{ [sort.sortBy]: sort.order }, { createdAt: "desc" }]
@@ -23,6 +24,7 @@ export default async function StudentsPage({
     prisma.student.findMany({
       where: {
         organizationId: user.organizationId,
+        ...(statusFilter ? { status: statusFilter === "在读" ? "ACTIVE" as const : "INACTIVE" as const } : {}),
         ...(query
           ? {
               OR: [
@@ -49,6 +51,7 @@ export default async function StudentsPage({
   return (
     <StudentDirectory
       query={query}
+      statusFilter={statusFilter}
       sortBy={sort?.sortBy ?? null}
       order={sort?.order ?? null}
       parents={parents}
@@ -66,6 +69,7 @@ export default async function StudentsPage({
         grade: student.grade,
         contactNote: student.contactNote,
         status: student.status,
+        archiveReason: student.archiveReason,
       }))}
     />
   );

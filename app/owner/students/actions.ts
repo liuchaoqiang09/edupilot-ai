@@ -4,6 +4,9 @@ import { revalidatePath } from "next/cache";
 import { MemberStatus, Prisma } from "@prisma/client";
 import { writeAudit } from "@/lib/audit";
 import { requireRole } from "@/lib/auth";
+import { calendarDateKey, canDeactivateEnrollment, periodValidity } from "@/lib/course-hours";
+import { shanghaiDateKey } from "@/lib/datetime";
+import { cellAt, decodeCsvBytes, headerMap, parseCsv } from "@/lib/student-import";
 import { prisma } from "@/lib/prisma";
 
 export type FieldErrors = Partial<Record<"name" | "studentNo" | "grade" | "contactNote", string>>;
@@ -12,6 +15,15 @@ export type ActionResult = {
   ok: boolean;
   message?: string;
   fieldErrors?: FieldErrors;
+};
+
+export type ImportFailure = { row: number; reason: string };
+
+export type ImportResult = {
+  ok: boolean;
+  message?: string;
+  created: number;
+  failed: ImportFailure[];
 };
 
 function clean(value: FormDataEntryValue | null) {
@@ -85,6 +97,122 @@ export async function createStudent(formData: FormData): Promise<ActionResult> {
   return { ok: true };
 }
 
+function formatStudentNo(value: number) {
+  return `STU-${String(value).padStart(4, "0")}`;
+}
+
+export async function importStudents(formData: FormData): Promise<ImportResult> {
+  const user = await requireRole("OWNER", "owner");
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return { ok: false, created: 0, failed: [], message: "请选择一个 CSV 文件。" };
+  if (!file.name.toLowerCase().endsWith(".csv")) return { ok: false, created: 0, failed: [], message: "只允许上传 .csv 文件。" };
+  if (file.size > 1024 * 1024) return { ok: false, created: 0, failed: [], message: "文件不能超过 1 MB。" };
+
+  const text = decodeCsvBytes(new Uint8Array(await file.arrayBuffer()));
+  const parsed = parseCsv(text);
+  const table = /^sep=/i.test(parsed[0]?.cells[0] ?? "") ? parsed.slice(1) : parsed;
+  const header = table[0];
+  if (!header) return { ok: false, created: 0, failed: [], message: "文件是空的。" };
+  const columns = headerMap(header.cells);
+  if (!columns.has("name")) return { ok: false, created: 0, failed: [], message: "表头需要包含「姓名」。请使用下载的模板。" };
+
+  const failed: ImportFailure[] = [];
+  const ready: { row: number; name: string; grade: string | null; contactNote: string | null; studentNo: string | null }[] = [];
+  const seenNos = new Set<string>();
+  for (const record of table.slice(1, 501)) {
+    const name = cellAt(record.cells, columns, "name");
+    const grade = cellAt(record.cells, columns, "grade");
+    const phone = cellAt(record.cells, columns, "phone");
+    const note = cellAt(record.cells, columns, "note");
+    const studentNo = cellAt(record.cells, columns, "studentNo");
+    if (!name && !grade && !phone && !note && !studentNo) continue;
+    if (!name) {
+      failed.push({ row: record.line, reason: "姓名为空" });
+      continue;
+    }
+    if (name.length > 40) {
+      failed.push({ row: record.line, reason: "姓名不能超过 40 个字" });
+      continue;
+    }
+    if (grade.length > 40) {
+      failed.push({ row: record.line, reason: "年级或年龄不能超过 40 个字" });
+      continue;
+    }
+    if (phone && !/^1[3-9]\d{9}$/.test(phone)) {
+      failed.push({ row: record.line, reason: "家长手机号不是 11 位大陆手机号" });
+      continue;
+    }
+    if (studentNo && !/^[A-Za-z0-9-]{1,32}$/.test(studentNo)) {
+      failed.push({ row: record.line, reason: "编号只能包含字母、数字和短横线" });
+      continue;
+    }
+    if (studentNo && seenNos.has(studentNo.toLowerCase())) {
+      failed.push({ row: record.line, reason: "编号在文件中重复" });
+      continue;
+    }
+    const contactNote = [phone ? `家长手机号：${phone}` : "", note].filter(Boolean).join("；");
+    if (contactNote.length > 200) {
+      failed.push({ row: record.line, reason: "备注过长" });
+      continue;
+    }
+    if (studentNo) seenNos.add(studentNo.toLowerCase());
+    ready.push({
+      row: record.line,
+      name,
+      grade: grade || null,
+      contactNote: contactNote || null,
+      studentNo: studentNo || null,
+    });
+  }
+  if (table.length > 501) failed.push({ row: 502, reason: "一次最多导入 500 行，超出的行已忽略" });
+
+  const existing = await prisma.student.findMany({
+    where: { organizationId: user.organizationId },
+    select: { studentNo: true },
+  });
+  const used = new Set(existing.map((row) => row.studentNo?.toLowerCase()).filter((value): value is string => Boolean(value)));
+  let next = 0;
+  for (const row of existing) {
+    const match = /^STU-(\d+)$/.exec(row.studentNo ?? "");
+    if (match) next = Math.max(next, Number(match[1]));
+  }
+
+  let created = 0;
+  for (const row of ready) {
+    let studentNo = row.studentNo;
+    if (studentNo && used.has(studentNo.toLowerCase())) {
+      failed.push({ row: row.row, reason: "编号在本机构已经存在" });
+      continue;
+    }
+    if (!studentNo) {
+      do {
+        next += 1;
+        studentNo = formatStudentNo(next);
+      } while (used.has(studentNo.toLowerCase()));
+    }
+    try {
+      await prisma.student.create({
+        data: {
+          organizationId: user.organizationId,
+          name: row.name,
+          studentNo,
+          grade: row.grade,
+          contactNote: row.contactNote,
+        },
+      });
+      used.add(studentNo.toLowerCase());
+      created += 1;
+    } catch (error) {
+      if (duplicate(error)) failed.push({ row: row.row, reason: "编号在本机构已经存在" });
+      else throw error;
+    }
+  }
+
+  failed.sort((left, right) => left.row - right.row);
+  revalidatePath("/owner/students");
+  return { ok: true, created, failed };
+}
+
 export async function updateStudent(id: string, formData: FormData): Promise<ActionResult> {
   const user = await requireRole("OWNER", "owner");
   const existing = await prisma.student.findFirst({
@@ -128,7 +256,7 @@ export async function setStudentStatus(id: string, status: MemberStatus): Promis
 
   const result = await prisma.student.updateMany({
     where: { id, organizationId: user.organizationId, status: existing.status },
-    data: { status },
+    data: status === "ACTIVE" ? { status, archiveReason: null } : { status },
   });
   if (result.count !== 1) return { ok: false, message: "状态没有更新，请刷新后再试。" };
 
@@ -143,6 +271,64 @@ export async function setStudentStatus(id: string, status: MemberStatus): Promis
     });
   }
 
-  revalidatePath("/owner/students");
+  refreshStudentViews();
   return { ok: true };
+}
+
+export async function deactivateStudent(studentId: string, courseId: string, reason: string): Promise<ActionResult> {
+  const user = await requireRole("OWNER", "owner");
+  const text = reason.trim();
+  if (!text) return { ok: false, message: "请填写停用原因。" };
+  if (text.length > 80) return { ok: false, message: "停用原因不能超过 80 个字。" };
+  if (!courseId) return { ok: false, message: "请从对应的报名记录停用。" };
+
+  const student = await prisma.student.findFirst({
+    where: { id: studentId, organizationId: user.organizationId, status: "ACTIVE" },
+    select: {
+      id: true,
+      enrollments: {
+        where: { courseId },
+        select: { startDate: true, endDate: true, course: { select: { billingType: true } } },
+      },
+      courseHourBalances: { where: { courseId }, select: { remainingHours: true } },
+    },
+  });
+  const enrollment = student?.enrollments[0];
+  if (!student || !enrollment) return { ok: false, message: "找不到这名在读学员的报名，或你无权停用。" };
+
+  const windows = student.enrollments.flatMap((row) => row.startDate && row.endDate ? [{ start: calendarDateKey(row.startDate), end: calendarDateKey(row.endDate) }] : []);
+  const period = enrollment.course.billingType === "PER_PERIOD" ? periodValidity(windows, shanghaiDateKey()) : null;
+  const remainingHours = student.courseHourBalances[0]?.remainingHours ?? 0;
+  if (!canDeactivateEnrollment({ billingType: enrollment.course.billingType, remainingHours, periodStatus: period?.status ?? null })) {
+    return { ok: false, message: "只有剩余课时为 0，或周期课程已过期时，才能停用这名学员。" };
+  }
+
+  const result = await prisma.student.updateMany({
+    where: { id: student.id, organizationId: user.organizationId, status: "ACTIVE" },
+    data: { status: "INACTIVE", archiveReason: text },
+  });
+  if (result.count !== 1) return { ok: false, message: "状态没有更新，请刷新后再试。" };
+
+  await writeAudit(prisma, {
+    organizationId: user.organizationId,
+    actorId: user.id,
+    action: "STUDENT_DEACTIVATED",
+    targetType: "Student",
+    targetId: student.id,
+    detail: `报名页停用学生：${text}`,
+  });
+  refreshStudentViews();
+  return { ok: true };
+}
+
+function refreshStudentViews() {
+  revalidatePath("/owner/students");
+  revalidatePath("/owner/billing");
+  revalidatePath("/owner/schedule");
+  revalidatePath("/parent");
+  revalidatePath("/parent/schedule");
+  revalidatePath("/teacher");
+  revalidatePath("/teacher/schedule");
+  revalidatePath("/teacher/students");
+  revalidatePath("/teacher/records");
 }

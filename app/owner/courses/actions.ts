@@ -143,6 +143,51 @@ export async function createClassGroup(formData: FormData): Promise<ActionResult
   return { ok: true };
 }
 
+export async function updateClassGroup(formData: FormData): Promise<ActionResult> {
+  const user = await requireRole("OWNER", "owner");
+  const fieldErrors: FieldErrors = {};
+  const id = clean(formData.get("id"));
+  const name = clean(formData.get("name"));
+  const teacherId = clean(formData.get("teacherId"));
+  const capacityText = clean(formData.get("capacity"));
+
+  if (!name) fieldErrors.name = "请填写班级名称。";
+  else if (name.length > 40) fieldErrors.name = "班级名称不能超过 40 个字。";
+  if (!teacherId) fieldErrors.teacherId = "请选择主讲教师。";
+
+  let capacity: number | null = null;
+  if (capacityText) {
+    const parsed = Number(capacityText);
+    if (!Number.isInteger(parsed) || parsed < 1 || parsed > 500) fieldErrors.capacity = "容量请填写 1 到 500 的整数。";
+    else capacity = parsed;
+  }
+  if (Object.keys(fieldErrors).length > 0) return { ok: false, fieldErrors };
+
+  const existing = await prisma.classGroup.findFirst({
+    where: { id, organizationId: user.organizationId, status: "ACTIVE" },
+    select: { id: true, teacherId: true },
+  });
+  if (!existing) return { ok: false, message: "找不到这个班级，或你无权修改。" };
+
+  if (teacherId !== existing.teacherId) {
+    const teacher = await prisma.teacher.findFirst({
+      where: { id: teacherId, organizationId: user.organizationId, status: "ACTIVE" },
+      select: { id: true },
+    });
+    if (!teacher) return { ok: false, fieldErrors: { teacherId: "只能选择本机构的在职教师。" } };
+  }
+
+  const updated = await prisma.classGroup.updateMany({
+    where: { id: existing.id, organizationId: user.organizationId, status: "ACTIVE" },
+    data: { name, teacherId, capacity },
+  });
+  if (updated.count !== 1) return { ok: false, message: "班级没有更新，请刷新后再试。" };
+
+  revalidatePath("/owner/courses");
+  revalidatePath("/owner/schedule");
+  return { ok: true };
+}
+
 export async function archiveCourse(id: string): Promise<ActionResult> {
   const user = await requireRole("OWNER", "owner");
   const result = await prisma.course.updateMany({
@@ -162,5 +207,29 @@ export async function archiveClassGroup(id: string): Promise<ActionResult> {
   });
   if (result.count !== 1) return { ok: false, message: "找不到这个班级，或你无权修改。" };
   revalidatePath("/owner/courses");
+  return { ok: true };
+}
+
+export async function restoreCourse(id: string): Promise<ActionResult> {
+  const user = await requireRole("OWNER", "owner");
+  const result = await prisma.course.updateMany({
+    where: { id, organizationId: user.organizationId, status: "ARCHIVED" },
+    data: { status: "ACTIVE" },
+  });
+  if (result.count !== 1) return { ok: false, message: "找不到这门已归档的课程，或你无权恢复。" };
+  revalidatePath("/owner/courses");
+  revalidatePath("/owner/schedule");
+  return { ok: true };
+}
+
+export async function restoreClassGroup(id: string): Promise<ActionResult> {
+  const user = await requireRole("OWNER", "owner");
+  const result = await prisma.classGroup.updateMany({
+    where: { id, organizationId: user.organizationId, status: "ARCHIVED" },
+    data: { status: "ACTIVE" },
+  });
+  if (result.count !== 1) return { ok: false, message: "找不到这个已归档的班级，或你无权恢复。" };
+  revalidatePath("/owner/courses");
+  revalidatePath("/owner/schedule");
   return { ok: true };
 }

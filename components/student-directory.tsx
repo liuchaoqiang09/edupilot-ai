@@ -8,7 +8,7 @@ import { ParentInviteButton } from "@/components/invite-button";
 import { Modal } from "@/components/modal";
 import { SortHeader } from "@/components/sort-header";
 import type { SortOrder } from "@/lib/table-sort";
-import { createStudent, setStudentStatus, updateStudent, type FieldErrors } from "@/app/owner/students/actions";
+import { createStudent, importStudents, setStudentStatus, updateStudent, type FieldErrors, type ImportFailure } from "@/app/owner/students/actions";
 import { linkParent, unlinkParent } from "@/app/owner/students/links";
 
 export type StudentRow = {
@@ -18,14 +18,47 @@ export type StudentRow = {
   grade: string | null;
   contactNote: string | null;
   status: "ACTIVE" | "INACTIVE";
+  archiveReason: string | null;
 };
 
 export type ParentAccount = { id: string; name: string; email: string };
 export type GuardianLink = { id: string; studentId: string; parentUserId: string; parentName: string; parentEmail: string };
 
+function studentListHref({
+  q,
+  status,
+  sortBy,
+  order,
+}: {
+  q?: string;
+  status?: string | null;
+  sortBy: "name" | "studentNo" | null;
+  order: SortOrder | null;
+}) {
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  if (status) params.set("status", status);
+  if (sortBy && order) {
+    params.set("sortBy", sortBy);
+    params.set("order", order);
+  }
+  const text = params.toString();
+  return text ? `/owner/students?${text}` : "/owner/students";
+}
+
+function FilterNotice({ label, href }: { label: string; href: string }) {
+  return (
+    <p className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+      <span className="rounded-full bg-[var(--teal-2)] px-2.5 py-1 font-bold text-[var(--teal)]">当前正在筛选：{label}</span>
+      <Link href={href} className="font-bold text-[var(--teal)]">重置</Link>
+    </p>
+  );
+}
+
 export function StudentDirectory({
   students,
   query,
+  statusFilter = null,
   sortBy,
   order,
   parents,
@@ -33,6 +66,7 @@ export function StudentDirectory({
 }: {
   students: StudentRow[];
   query: string;
+  statusFilter?: "在读" | "已停用" | null;
   sortBy: "name" | "studentNo" | null;
   order: SortOrder | null;
   parents: ParentAccount[];
@@ -47,6 +81,39 @@ export function StudentDirectory({
   const [linkMessage, setLinkMessage] = useState("");
   const [parentId, setParentId] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+  const [importing, setImporting] = useState(false);
+  const [importMessage, setImportMessage] = useState("");
+  const [importFailures, setImportFailures] = useState<ImportFailure[]>([]);
+
+  function downloadTemplate() {
+    const csv = "\uFEFF姓名*,年级/年龄,家长手机号,备注\r\n张三,初二,13800000000,无\r\n";
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "学生导入模板.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function uploadStudents(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    setImportMessage("");
+    setImportFailures([]);
+    startTransition(async () => {
+      const result = await importStudents(formData);
+      if (!result.ok) {
+        setImportMessage(result.message ?? "导入失败。");
+        return;
+      }
+      const skipped = result.failed.length;
+      setImportFailures(result.failed);
+      setImportMessage(result.created === 0 && skipped === 0 ? "没有可导入的学生。" : `成功导入 ${result.created} 名学生，失败 ${skipped} 名。`);
+      form.reset();
+      router.refresh();
+    });
+  }
 
   function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -118,13 +185,20 @@ export function StudentDirectory({
         <div>
           <h1 className="text-[28px] font-semibold tracking-tight">学生管理</h1>
           <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">学生档案按当前机构保存。停用后仍可查询，不会删除历史记录。</p>
+          {statusFilter ? <FilterNotice label={statusFilter} href={studentListHref({ sortBy, order })} /> : null}
         </div>
-        <button type="button" onClick={() => { setEditing("new"); setFieldErrors({}); setMessage(""); }} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white">
-          ＋ 新增学生
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => { setImporting(true); setImportMessage(""); setImportFailures([]); }} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold text-[#385058]">
+            批量导入
+          </button>
+          <button type="button" onClick={() => { setEditing("new"); setFieldErrors({}); setMessage(""); }} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white">
+            ＋ 新增学生
+          </button>
+        </div>
       </div>
 
       <form action="/owner/students" className="mt-6 flex flex-wrap gap-2">
+        {statusFilter ? <input type="hidden" name="status" value={statusFilter} /> : null}
         {sortBy && order ? (
           <>
             <input type="hidden" name="sortBy" value={sortBy} />
@@ -139,7 +213,7 @@ export function StudentDirectory({
         />
         <button className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold text-[#385058]">搜索</button>
         {query ? (
-          <Link href={sortBy && order ? `/owner/students?sortBy=${sortBy}&order=${order}` : "/owner/students"} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold text-[#385058]">
+          <Link href={studentListHref({ status: statusFilter, sortBy, order })} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold text-[#385058]">
             重置
           </Link>
         ) : null}
@@ -151,8 +225,8 @@ export function StudentDirectory({
           <table className="w-full min-w-[720px] border-collapse text-left text-xs">
             <thead className="bg-[#fafbf9] text-[10px] tracking-wide text-[#84918e]">
               <tr>
-                <SortHeader label="学生" field="name" sortBy={sortBy} order={order} pathname="/owner/students" query={query} />
-                <SortHeader label="编号" field="studentNo" sortBy={sortBy} order={order} pathname="/owner/students" query={query} />
+                <SortHeader label="学生" field="name" sortBy={sortBy} order={order} pathname="/owner/students" query={query} extra={statusFilter ? { status: statusFilter } : undefined} />
+                <SortHeader label="编号" field="studentNo" sortBy={sortBy} order={order} pathname="/owner/students" query={query} extra={statusFilter ? { status: statusFilter } : undefined} />
                 <th className="px-4 py-3 font-extrabold">年级 / 年龄</th>
                 <th className="px-4 py-3 font-extrabold">状态</th>
                 <th className="px-4 py-3 font-extrabold">操作</th>
@@ -162,7 +236,7 @@ export function StudentDirectory({
               {students.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-4 py-12 text-center leading-7 text-[var(--muted)]">
-                    {query ? "没有找到符合条件的学生。" : "还没有学生。可以先新增一名学生。"}
+                    {query || statusFilter ? "没有找到符合条件的学生。" : "还没有学生。可以先新增一名学生。"}
                   </td>
                 </tr>
               ) : (
@@ -194,6 +268,32 @@ export function StudentDirectory({
         <div className="border-t border-[#eef1ee] px-4 py-3 text-[11px] text-[var(--muted)]">共 {students.length} 名学生 · 数据来自当前机构</div>
       </div>
 
+      {importing ? (
+        <Modal title="批量导入学生" onClose={() => setImporting(false)}>
+          <form onSubmit={uploadStudents} className="grid gap-3 px-5 py-5 text-sm">
+            <button type="button" onClick={downloadTemplate} className="w-fit font-bold text-[var(--teal)]">下载导入模板（CSV格式）</button>
+            <p className="leading-6 text-[var(--muted)]">用 Excel 打开模板，从第三行开始填写。姓名必填。年级、家长手机号和备注可以留空。手机号只保存下来，供以后绑定家长，这次不会创建家长账号。编号不用填，系统会自动生成；如果自行增加「编号」列，则只能使用字母、数字和短横线。请另存为 CSV 再上传。</p>
+            <label className="grid gap-1.5 text-xs font-bold">
+              选择文件
+              <input name="file" type="file" accept=".csv,text/csv" required className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium" />
+            </label>
+            {importMessage ? <p className="text-sm font-semibold">{importMessage}</p> : null}
+            {importFailures.length > 0 ? (
+              <ul className="max-h-40 overflow-y-auto rounded-xl bg-[#fff6f4] px-3 py-2 text-xs leading-6 text-[#9a4d4d]">
+                {importFailures.slice(0, 12).map((failure) => (
+                  <li key={`${failure.row}-${failure.reason}`}>第 {failure.row} 行：{failure.reason}</li>
+                ))}
+                {importFailures.length > 12 ? <li>还有 {importFailures.length - 12} 行未列出。</li> : null}
+              </ul>
+            ) : null}
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setImporting(false)} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold">关闭</button>
+              <button disabled={pending} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white disabled:opacity-60">{pending ? "正在导入…" : "开始导入"}</button>
+            </div>
+          </form>
+        </Modal>
+      ) : null}
+
       {editing ? (
         <Modal title={editing === "new" ? "新增学生" : "编辑学生"} onClose={() => setEditing(null)}>
           <form key={editing === "new" ? "new" : editing.id} onSubmit={save} className="px-5 py-5">
@@ -219,6 +319,7 @@ export function StudentDirectory({
             <div><div className="text-xs font-bold">编号</div><p className="mt-1 text-[var(--muted)]">{viewing.studentNo ?? "—"}</p></div>
             <div><div className="text-xs font-bold">年级 / 年龄</div><p className="mt-1 text-[var(--muted)]">{viewing.grade ?? "未填写"}</p></div>
             <div><div className="text-xs font-bold">联系备注</div><p className="mt-1 leading-6 text-[var(--muted)]">{viewing.contactNote ?? "未填写"}</p></div>
+            {viewing.status === "INACTIVE" ? <div><div className="text-xs font-bold">停用原因</div><p className="mt-1 leading-6 text-[var(--muted)]">{viewing.archiveReason?.trim() || "未填写"}</p></div> : null}
             <div>
               <div className="text-xs font-bold">已绑定家长</div>
               {guardians.length === 0 ? (

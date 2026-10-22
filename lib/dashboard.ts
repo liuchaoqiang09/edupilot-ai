@@ -44,7 +44,7 @@ export async function ownerSnapshot(organizationId: string) {
     prisma.teacher.count({ where: { ...org, status: "ACTIVE" } }),
     prisma.lessonSession.count({ where: { ...activeLesson, startAt: { gte: time.todayStart, lt: time.todayEnd } } }),
     prisma.lessonSession.count({ where: { ...activeLesson, startAt: { gte: time.todayStart, lt: time.upcomingEnd } } }),
-    prisma.lessonSession.count({ where: { ...activeLesson, endAt: { lt: new Date() }, teachingRecord: { is: null } } }),
+    prisma.lessonSession.count({ where: { ...activeLesson, endAt: { lte: new Date() }, teachingRecord: { is: null } } }),
     prisma.teachingReport.count({ where: { ...org, status: { in: ["DRAFT", "CONFIRMED", "RETURNED"] } } }),
     prisma.lessonStudent.groupBy({
       by: ["attendanceStatus"],
@@ -94,20 +94,43 @@ function monthBounds(todayKey: string) {
   };
 }
 
+function revenueBounds(todayKey: string) {
+  const [yearText, monthText] = todayKey.split("-");
+  const start = shiftMonth(Number(yearText), Number(monthText), -5);
+  const end = shiftMonth(Number(yearText), Number(monthText), 1);
+  const months = Array.from({ length: 6 }, (_, index) => {
+    const point = shiftMonth(Number(yearText), Number(monthText), index - 5);
+    const key = `${point.year}-${String(point.month).padStart(2, "0")}`;
+    return { key, label: `${point.month}月` };
+  });
+  return {
+    start: dayRange(`${start.year}-${String(start.month).padStart(2, "0")}-01`).start,
+    end: dayRange(`${end.year}-${String(end.month).padStart(2, "0")}-01`).start,
+    months,
+  };
+}
+
+function shiftMonth(year: number, month: number, delta: number) {
+  const index = year * 12 + (month - 1) + delta;
+  return { year: Math.floor(index / 12), month: (index % 12) + 1 };
+}
+
 function percent(part: number, total: number) {
   if (total <= 0) return 0;
   return Math.round((part / total) * 100);
 }
 
 export async function ownerOverview(organizationId: string) {
-  const time = windows();
+  const now = new Date();
+  const time = windows(now);
   const month = monthBounds(time.today);
   const todayWhere = {
     organizationId,
     status: { not: "CANCELLED" as const },
     startAt: { gte: time.todayStart, lt: time.todayEnd },
   };
-  const [activeStudents, newStudents, enrollmentsThisMonth, enrollmentsLastMonth, lessons, pendingReports, pendingReportRows, renewingCount] = await Promise.all([
+  const revenueWindow = revenueBounds(time.today);
+  const [activeStudents, newStudents, enrollmentsThisMonth, enrollmentsLastMonth, lessons, pendingReports, pendingReportRows, renewingCount, paidRows] = await Promise.all([
     prisma.student.count({ where: { organizationId, status: "ACTIVE" } }),
     prisma.student.count({ where: { organizationId, createdAt: { gte: month.start, lt: month.end } } }),
     prisma.enrollment.findMany({
@@ -127,6 +150,15 @@ export async function ownerOverview(organizationId: string) {
         course: { select: { name: true } },
         teacher: { select: { name: true } },
         teachingRecord: { select: { id: true } },
+        students: {
+          orderBy: { student: { name: "asc" } },
+          select: {
+            id: true,
+            attendanceStatus: true,
+            attendanceNote: true,
+            student: { select: { name: true } },
+          },
+        },
         _count: { select: { students: true, reports: true } },
         reports: { where: { status: "PUBLISHED" }, select: { id: true } },
       },
@@ -139,13 +171,18 @@ export async function ownerOverview(organizationId: string) {
       select: { student: { select: { name: true } } },
     }),
     findRenewingStudentIds(prisma, organizationId).then((ids) => ids.size),
+    prisma.enrollment.findMany({
+      where: { organizationId, paidAt: { gte: revenueWindow.start, lt: revenueWindow.end } },
+      select: { amount: true, paidAt: true },
+    }),
   ]);
 
-  const lessonCount = lessons.length;
-  const recorded = lessons.filter((lesson) => lesson.teachingRecord).length;
-  const expectedReports = lessons.reduce((sum, lesson) => sum + lesson._count.students, 0);
-  const generatedReports = lessons.reduce((sum, lesson) => sum + lesson._count.reports, 0);
-  const publishedReports = lessons.reduce((sum, lesson) => sum + lesson.reports.length, 0);
+  const endedLessons = lessons.filter((lesson) => lesson.endAt <= now);
+  const endedCount = endedLessons.length;
+  const recordedEnded = endedLessons.filter((lesson) => lesson.teachingRecord).length;
+  const expectedReports = endedLessons.reduce((sum, lesson) => sum + lesson._count.students, 0);
+  const generatedReports = endedLessons.reduce((sum, lesson) => sum + lesson._count.reports, 0);
+  const publishedReports = endedLessons.reduce((sum, lesson) => sum + lesson.reports.length, 0);
   const weeks = [
     { label: "1–7日", from: 1, to: 7 },
     { label: "8–14日", from: 8, to: 14 },
@@ -167,20 +204,27 @@ export async function ownerOverview(organizationId: string) {
     enrollmentsThisMonth: enrollmentsThisMonth.length,
     enrollmentsLastMonth,
     lessons,
-    missingRecords: lessonCount - recorded,
+    missingRecords: endedCount - recordedEnded,
     pendingReports,
     renewingCount,
     pendingNames: [...new Set(pendingReportRows.map((row) => row.student.name))],
     rates: {
-      recorded: percent(recorded, lessonCount),
+      recorded: percent(recordedEnded, endedCount),
       generated: percent(generatedReports, expectedReports),
       published: percent(publishedReports, expectedReports),
-      lessonCount,
+      lessonCount: endedCount,
       expectedReports,
     },
     weeks,
     currentWeek,
     todayKey: time.today,
+    revenue: revenueWindow.months.map((month) => ({
+      label: month.label,
+      amount: paidRows.reduce((sum, row) => {
+        if (!row.paidAt || shanghaiDateKey(row.paidAt).slice(0, 7) !== month.key) return sum;
+        return Math.round((sum + Number(row.amount)) * 100) / 100;
+      }, 0),
+    })),
   };
 }
 
@@ -190,7 +234,7 @@ export async function teacherSnapshot(organizationId: string, teacherId: string 
   }
   const time = windows();
   const mine = { organizationId, teacherId, status: { not: "CANCELLED" as const } };
-  const pendingWhere = { ...mine, endAt: { lt: new Date() }, teachingRecord: { is: null } };
+  const pendingWhere = { ...mine, endAt: { lte: new Date() }, teachingRecord: { is: null } };
   const [todayLessons, pendingRecordCount, pendingRecords, pendingReports, published] = await Promise.all([
     prisma.lessonSession.count({ where: { ...mine, startAt: { gte: time.todayStart, lt: time.todayEnd } } }),
     prisma.lessonSession.count({ where: pendingWhere }),
@@ -211,7 +255,7 @@ export async function teacherSnapshot(organizationId: string, teacherId: string 
         id: true,
         publishedAt: true,
         student: { select: { name: true } },
-        lessonSession: { select: { title: true, course: { select: { name: true } } } },
+        lessonSession: { select: { id: true, title: true, course: { select: { name: true } } } },
       },
     }),
   ]);
@@ -223,13 +267,13 @@ type PublishedBrief = {
   id: string;
   publishedAt: Date | null;
   student: { name: string };
-  lessonSession: { title: string | null; course: { name: string } };
+  lessonSession: { id: string; title: string | null; course: { name: string } };
 };
 
 export async function parentSnapshot(organizationId: string, parentUserId: string) {
   const links = await prisma.parentStudentLink.findMany({
     where: { organizationId, parentUserId },
-    include: { student: { select: { id: true, name: true, grade: true, studentNo: true, status: true } } },
+    include: { student: { select: { id: true, name: true, grade: true, studentNo: true, status: true, archiveReason: true } } },
     orderBy: { createdAt: "desc" },
   });
   const studentIds = links.map((link) => link.student.id);
@@ -243,6 +287,10 @@ export async function parentSnapshot(organizationId: string, parentUserId: strin
         organizationId,
         studentId: { in: studentIds },
         lessonSession: { status: { not: "CANCELLED" }, startAt: { gte: time.todayStart, lt: time.upcomingEnd } },
+        OR: [
+          { student: { status: "ACTIVE" } },
+          { lessonSession: { startAt: { lte: new Date() } } },
+        ],
       },
       orderBy: { lessonSession: { startAt: "asc" } },
       take: 6,

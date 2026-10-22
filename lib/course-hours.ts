@@ -139,6 +139,11 @@ export function periodNeedsRenewal(status: PeriodValidity) {
   return status === "已过期" || status === "未填写有效期";
 }
 
+export function canDeactivateEnrollment(input: { billingType: "PER_LESSON" | "PER_PERIOD"; remainingHours: number; periodStatus: PeriodValidity | null }) {
+  if (input.billingType === "PER_PERIOD") return input.periodStatus === "已过期";
+  return input.remainingHours === 0;
+}
+
 export async function findRenewingStudentIds(db: PrismaClient | Prisma.TransactionClient, organizationId: string) {
   const today = shanghaiDateKey();
   const [lessonEnrollments, balances, periodEnrollments] = await Promise.all([

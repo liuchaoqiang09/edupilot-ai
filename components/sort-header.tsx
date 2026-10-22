@@ -10,6 +10,7 @@ export function SortHeader({
   order,
   pathname,
   query,
+  extra,
 }: {
   label: string;
   field: string;
@@ -17,11 +18,15 @@ export function SortHeader({
   order: SortOrder | null;
   pathname: string;
   query?: string;
+  extra?: Record<string, string>;
 }) {
   const active = sortBy === field;
   const nextOrder = !active ? "asc" : order === "asc" ? "desc" : null;
   const params = new URLSearchParams();
   if (query) params.set("q", query);
+  for (const [key, value] of Object.entries(extra ?? {})) {
+    if (value) params.set(key, value);
+  }
   if (nextOrder) {
     params.set("sortBy", field);
     params.set("order", nextOrder);

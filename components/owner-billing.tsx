@@ -1,7 +1,10 @@
 "use client";
 
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FormEvent, useState, useTransition } from "react";
 import { createEnrollment } from "@/app/owner/billing/actions";
+import { deactivateStudent } from "@/app/owner/students/actions";
 import { Modal } from "@/components/modal";
 import { SortHeader } from "@/components/sort-header";
 import type { SortOrder } from "@/lib/table-sort";
@@ -17,6 +20,8 @@ export type BillingStudent = {
   lastPaid: string;
   followUp: boolean;
   enrolled: boolean;
+  canDeactivate: boolean;
+  courseId?: string;
 };
 
 const fieldClass = "rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]";
@@ -25,22 +30,28 @@ export function OwnerBilling({
   students,
   courses,
   stats,
+  renewalOnly = false,
   sortBy,
   order,
 }: {
   students: BillingStudent[];
-  courses: { id: string; name: string; billingType: "PER_LESSON" | "PER_PERIOD" }[];
+  courses: { id: string; name: string; billingType: "PER_LESSON" | "PER_PERIOD"; classGroups: { id: string; name: string }[] }[];
   stats: { enrollments: number; compare: string; income: string; renewing: number; review: number };
+  renewalOnly?: boolean;
   sortBy: "name" | "course" | null;
   order: SortOrder | null;
 }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
+  const [retiring, setRetiring] = useState<BillingStudent | null>(null);
+  const [reason, setReason] = useState("");
   const [studentId, setStudentId] = useState("");
   const [courseId, setCourseId] = useState("");
+  const [classGroupId, setClassGroupId] = useState("");
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState("");
   const [failed, setFailed] = useState(false);
-  const followUps = students.filter((student) => student.followUp).length;
+  const followUps = stats.renewing;
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -55,6 +66,23 @@ export function OwnerBilling({
     });
   }
 
+  function retire(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!retiring?.courseId) return;
+    setMessage("");
+    setFailed(false);
+    startTransition(async () => {
+      const result = await deactivateStudent(retiring.id, retiring.courseId!, reason);
+      setFailed(!result.ok);
+      setMessage(result.message || (result.ok ? "已停用。" : "停用失败。"));
+      if (result.ok) {
+        setRetiring(null);
+        setReason("");
+        router.refresh();
+      }
+    });
+  }
+
   return (
     <section>
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -62,7 +90,7 @@ export function OwnerBilling({
           <h1 className="text-[28px] font-semibold tracking-tight">报名与课时</h1>
           <p className="mt-2 max-w-2xl text-sm leading-7 text-[var(--muted)]">按课时的课程记录剩余节数。按周期的课程记录有效期，出勤不扣课时。</p>
         </div>
-        <button type="button" onClick={() => { setOpen(true); setStudentId(""); setCourseId(""); setMessage(""); }} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white">＋ 记录报名</button>
+        <button type="button" onClick={() => { setOpen(true); setStudentId(""); setCourseId(""); setClassGroupId(""); setMessage(""); }} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white">＋ 记录报名</button>
       </div>
       {message && !open ? <p className={`mt-4 rounded-xl px-4 py-3 text-xs leading-6 ${failed ? "bg-[#fff4ec] text-[#9a4b24]" : "bg-[#f0f6ee] text-[#4e6c5c]"}`}>{message}</p> : null}
 
@@ -77,19 +105,20 @@ export function OwnerBilling({
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#edf0ee] px-5 py-4">
           <div>
             <h2 className="text-sm font-semibold">学员课时</h2>
-            <p className="mt-1 text-[11px] text-[var(--muted)]">按课时显示剩余节数，按周期显示有效期</p>
+            <p className="mt-1 text-[11px] text-[var(--muted)]">{renewalOnly ? "当前正在筛选：待续费。只显示课时不足 8 节，或周期课程已过期、未填写有效期的报名。" : "按课时显示剩余节数，按周期显示有效期"}</p>
+            {renewalOnly ? <Link href={sortBy && order ? `/owner/billing?sortBy=${sortBy}&order=${order}` : "/owner/billing"} className="mt-2 inline-block text-xs font-bold text-[var(--teal)]">重置</Link> : null}
           </div>
-          <span className="rounded-full bg-[#fff2df] px-2 py-1 text-[10px] font-bold text-[#9a6729]">{followUps} 位待跟进</span>
+          <span className="rounded-full bg-[#fff2df] px-2 py-1 text-[10px] font-bold text-[#9a6729]">{followUps} 位待续费</span>
         </div>
         {students.length === 0 ? (
-          <p className="px-5 py-12 text-center text-sm leading-7 text-[var(--muted)]">还没有在读学员。请先到学生管理里添加。</p>
+          <p className="px-5 py-12 text-center text-sm leading-7 text-[var(--muted)]">{renewalOnly ? "没有待续费的学员。" : "还没有在读学员。请先到学生管理里添加。"}</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[720px] border-collapse text-left text-xs">
               <thead className="bg-[#fafbf9] text-[10px] tracking-wide text-[#84918e]">
                 <tr>
-                  <SortHeader label="学员" field="name" sortBy={sortBy} order={order} pathname="/owner/billing" />
-                  <SortHeader label="报名课程" field="course" sortBy={sortBy} order={order} pathname="/owner/billing" />
+                  <SortHeader label="学员" field="name" sortBy={sortBy} order={order} pathname="/owner/billing" extra={renewalOnly ? { status: "待续费" } : undefined} />
+                  <SortHeader label="报名课程" field="course" sortBy={sortBy} order={order} pathname="/owner/billing" extra={renewalOnly ? { status: "待续费" } : undefined} />
                   <th className="px-4 py-3 font-extrabold">课时 / 有效期</th>
                   <th className="px-4 py-3 font-extrabold">最近缴费</th>
                   <th className="px-4 py-3 font-extrabold">状态</th>
@@ -117,7 +146,10 @@ export function OwnerBilling({
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <button type="button" onClick={() => { setStudentId(student.id); setCourseId(""); setOpen(true); setMessage(""); }} className="font-bold text-[var(--teal)]">记录报名</button>
+                      <button type="button" onClick={() => { setStudentId(student.id); setCourseId(student.courseId ?? ""); setClassGroupId(""); setOpen(true); setMessage(""); }} className="font-bold text-[var(--teal)]">记录报名</button>
+                      {student.canDeactivate && student.courseId ? (
+                        <button type="button" onClick={() => { setRetiring(student); setReason(""); setMessage(""); setFailed(false); }} className="ml-3 font-bold text-[#74838b]">停用学生</button>
+                      ) : null}
                     </td>
                   </tr>
                 ))}
@@ -127,6 +159,23 @@ export function OwnerBilling({
         )}
         <p className="border-t border-[#eef1ee] px-5 py-3 text-[11px] leading-6 text-[var(--muted)]">按课时课程：到课或迟到扣这节课所属课程 1 课时。按周期课程：有效期内出勤不扣课时。请假、缺勤和未标记会退回此前实际扣掉的那 1 课时。</p>
       </section>
+
+      {retiring ? (
+        <Modal title="停用学生" onClose={() => setRetiring(null)}>
+          <form onSubmit={retire} className="px-5 py-5">
+            <p className="text-sm leading-7 text-[var(--muted)]">停用后，「{retiring.name}」在学生管理中会变为已停用，也不能再排入新的课次。已有课次和报告会保留。</p>
+            <label className="mt-4 grid gap-1.5 text-xs font-bold">
+              停用原因 <span className="font-medium text-[#9a6729]">必填</span>
+              <textarea value={reason} onChange={(event) => setReason(event.target.value)} required maxLength={80} rows={3} placeholder="请填写停用原因" className={fieldClass} />
+            </label>
+            {message && !open ? <p className="mt-3 text-xs text-[#b94d4d]">{message}</p> : null}
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setRetiring(null)} className="rounded-[10px] border border-[var(--line)] px-3.5 py-2.5 text-xs font-bold">取消</button>
+              <button disabled={pending || reason.trim().length === 0} className="rounded-[10px] bg-[#74838b] px-3.5 py-2.5 text-xs font-bold text-white disabled:opacity-60">{pending ? "正在停用…" : "确认停用"}</button>
+            </div>
+          </form>
+        </Modal>
+      ) : null}
 
       {open ? (
         <Modal title="记录报名" onClose={() => setOpen(false)}>
@@ -141,11 +190,22 @@ export function OwnerBilling({
               </label>
               <label className="grid gap-1.5 text-xs font-bold">
                 报名课程 <span className="font-medium text-[#9a6729]">必填</span>
-                <select name="courseId" required value={courseId} onChange={(event) => setCourseId(event.target.value)} className={fieldClass}>
+                <select name="courseId" required value={courseId} onChange={(event) => { setCourseId(event.target.value); setClassGroupId(""); }} className={fieldClass}>
                   <option value="">请选择课程</option>
                   {courses.map((course) => <option key={course.id} value={course.id}>{course.name}</option>)}
                 </select>
               </label>
+              {courseId && (courses.find((course) => course.id === courseId)?.classGroups.length ?? 0) > 0 ? (
+                <label className="grid gap-1.5 text-xs font-bold">
+                  报名班级 <span className="font-medium text-[#9a6729]">必填</span>
+                  <select name="classGroupId" required value={classGroupId} onChange={(event) => setClassGroupId(event.target.value)} className={fieldClass}>
+                    <option value="">请选择班级</option>
+                    {courses.find((course) => course.id === courseId)?.classGroups.map((item) => (
+                      <option key={item.id} value={item.id}>{item.name}</option>
+                    ))}
+                  </select>
+                </label>
+              ) : courseId ? <p className="text-xs text-[var(--muted)]">这门课程还没有班级，这次报名先不绑定班级。</p> : null}
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="grid gap-1.5 text-xs font-bold">
                   应收金额

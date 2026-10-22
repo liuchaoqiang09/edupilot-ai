@@ -1,9 +1,9 @@
 import Link from "next/link";
+import { OwnerTodayLessons, type TodayLessonCard } from "@/components/owner-today-lessons";
+import { RevenueTrend } from "@/components/revenue-trend";
 import { requireRole } from "@/lib/auth";
 import { ownerOverview } from "@/lib/dashboard";
-import { formatClock, formatDateLabel } from "@/lib/datetime";
-
-const barColors = ["bg-[#91c8b5]", "bg-[#e8b56d]", "bg-[#b7a6e3]"];
+import { formatClock, formatDateLabel, shanghaiDateKey } from "@/lib/datetime";
 
 function changeText(current: number, previous: number) {
   if (previous === 0) return current === 0 ? "上月也是 0" : "上月为 0";
@@ -22,6 +22,27 @@ function hello(name: string) {
 export default async function OwnerHomePage() {
   const user = await requireRole("OWNER", "owner");
   const data = await ownerOverview(user.organizationId);
+  const now = new Date();
+  const todayLessons: TodayLessonCard[] = data.lessons.map((lesson) => ({
+    id: lesson.id,
+    title: lesson.title ?? "课次",
+    startLabel: formatClock(lesson.startAt),
+    endLabel: formatClock(lesson.endAt),
+    location: lesson.location,
+    courseName: lesson.course.name,
+    teacherName: lesson.teacher.name,
+    recorded: Boolean(lesson.teachingRecord),
+    started: lesson.startAt <= now,
+    ended: lesson.endAt <= now,
+    students: lesson.students.map((row) => ({
+      id: row.id,
+      name: row.student.name,
+      attendanceStatus: row.attendanceStatus,
+      attendanceNote: row.attendanceNote,
+    })),
+  }));
+  const todaySchedule = `/owner/schedule?view=day&date=${shanghaiDateKey()}`;
+  const pendingRecords = `${todaySchedule}&status=待填写`;
   const maxWeek = Math.max(...data.weeks.map((week) => week.count), 0);
   const openItems = (data.pendingReports > 0 ? 1 : 0) + (data.missingRecords > 0 ? 1 : 0) + (data.renewingCount > 0 ? 1 : 0);
   const names = data.pendingNames;
@@ -46,13 +67,13 @@ export default async function OwnerHomePage() {
       </div>
 
       <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard icon="♙" label="在读学员" value={data.activeStudents} foot={data.newStudents > 0 ? `本月新增 ${data.newStudents}` : "本月还没有新增学员"} up={data.newStudents > 0} />
-        <StatCard icon="▦" label="今日课程" value={data.lessons.length} foot={`已排课 ${data.lessons.length} 节 · ${data.missingRecords} 节待记录`} />
-        <StatCard icon="¥" label="待续费学员" value={data.renewingCount} foot={data.renewingCount === 0 ? "课时都不少于 8 节，周期课程也在有效期内" : "课时不足 8 节，或周期课程已过期"} />
-        <StatCard icon="✳" label="待确认报告" value={data.pendingReports} foot={data.pendingReports === 0 ? "目前没有等待确认的报告" : "草稿、已确认或已退回，家长还看不到"} />
+        <StatCard href="/owner/students?status=在读" icon="♙" label="在读学员" value={data.activeStudents} foot={data.newStudents > 0 ? `本月新增 ${data.newStudents}` : "本月还没有新增学员"} up={data.newStudents > 0} />
+        <StatCard href={todaySchedule} icon="▦" label="今日课程" value={data.lessons.length} foot={`已排课 ${data.lessons.length} 节 · ${data.missingRecords} 节待记录`} />
+        <StatCard href="/owner/billing?status=待续费" icon="¥" label="待续费学员" value={data.renewingCount} foot={data.renewingCount === 0 ? "课时都不少于 8 节，周期课程也在有效期内" : "课时不足 8 节，或周期课程已过期"} />
+        <StatCard href="/owner/reports?status=待确认" icon="✳" label="待确认报告" value={data.pendingReports} foot={data.pendingReports === 0 ? "目前没有等待确认的报告" : "草稿、已确认或已退回，家长还看不到"} />
       </div>
 
-      <div className="mt-4 grid items-start gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.8fr)]">
+      <div className="mt-4 grid items-stretch gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.8fr)]">
         <div className="grid gap-4">
         <section className="overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
           <div className="flex items-center justify-between gap-3 border-b border-[#edf0ee] px-5 py-4">
@@ -65,25 +86,7 @@ export default async function OwnerHomePage() {
           {data.lessons.length === 0 ? (
             <p className="px-5 py-12 text-center text-sm leading-7 text-[var(--muted)]">今天还没有课次。可以先去排课，安排今天的课程。</p>
           ) : (
-            <ul className="px-5">
-              {data.lessons.map((lesson, index) => {
-                const status = lesson.teachingRecord ? "已记录" : "待填写记录";
-                return (
-                  <li key={lesson.id} className="grid grid-cols-[58px_4px_minmax(0,1fr)] items-center gap-3 border-b border-[#f0f2f0] py-4 last:border-b-0 sm:grid-cols-[58px_4px_minmax(0,1fr)_auto]">
-                    <div className="text-xs font-extrabold">
-                      {formatClock(lesson.startAt)}
-                      <small className="mt-1 block font-medium text-[var(--muted)]">{formatClock(lesson.endAt)}</small>
-                    </div>
-                    <span className={`h-10 rounded ${barColors[index % barColors.length]}`} />
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-bold">{lesson.course.name} · {lesson.title ?? "课次"}</div>
-                      <div className="mt-1 truncate text-[11px] text-[var(--muted)]">{lesson.teacher.name} · {lesson._count.students} 人 · {lesson.location ?? "教室待定"}</div>
-                    </div>
-                    <span className={`hidden rounded-full px-2 py-1 text-[10px] font-bold sm:inline ${status === "待填写记录" ? "bg-[#fff2df] text-[#9a6729]" : "bg-[#edf5f1] text-[#34725d]"}`}>{status}</span>
-                  </li>
-                );
-              })}
-            </ul>
+            <OwnerTodayLessons lessons={todayLessons} />
           )}
         </section>
         <section className="overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
@@ -94,13 +97,13 @@ export default async function OwnerHomePage() {
             </div>
             <span className="rounded-full bg-[var(--teal-2)] px-2 py-1 text-[10px] font-bold text-[var(--teal)]">今天</span>
           </div>
-          <Progress label="课堂记录已提交" value={data.rates.recorded} hint={data.rates.lessonCount === 0 ? "今天没有课次" : `${data.rates.lessonCount} 节课`} />
-          <Progress label="AI 分析已生成" value={data.rates.generated} hint={data.rates.expectedReports === 0 ? "今天没有学员名单" : `${data.rates.expectedReports} 位学员`} />
-          <Progress label="报告已发布" value={data.rates.published} hint={data.rates.expectedReports === 0 ? "今天没有学员名单" : `${data.rates.expectedReports} 位学员`} />
+          <Progress label="课堂记录已提交" value={data.rates.recorded} hint={data.lessons.length === 0 ? "今天没有课次" : data.rates.lessonCount === 0 ? "还没有已结束的课次" : `${data.rates.lessonCount} 节已结束的课`} />
+          <Progress label="AI 分析已生成" value={data.rates.generated} hint={data.lessons.length === 0 ? "今天没有课次" : data.rates.lessonCount === 0 ? "还没有已结束的课次" : data.rates.expectedReports === 0 ? "已结束的课次还没有学员" : `${data.rates.expectedReports} 位学员`} />
+          <Progress label="报告已发布" value={data.rates.published} hint={data.lessons.length === 0 ? "今天没有课次" : data.rates.lessonCount === 0 ? "还没有已结束的课次" : data.rates.expectedReports === 0 ? "已结束的课次还没有学员" : `${data.rates.expectedReports} 位学员`} />
         </section>
         </div>
 
-        <div className="grid gap-4">
+        <div className="flex flex-col gap-4 xl:h-full xl:min-h-0">
         <section className="overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
           <div className="flex items-center justify-between gap-3 border-b border-[#edf0ee] px-5 py-4">
             <div>
@@ -110,9 +113,9 @@ export default async function OwnerHomePage() {
             <span className="rounded-full bg-[#fff2df] px-2 py-1 text-[10px] font-bold text-[#9a6729]">{openItems} 项</span>
           </div>
           <ul className="px-5">
-            <Todo icon="✳" title="AI 教学报告待确认" body={reportHint} count={data.pendingReports} href="/owner/reports" action="去查看 →" />
-            <Todo icon="¥" title="学员续费跟进" body={data.renewingCount === 0 ? "目前没有课时不足或周期课程已过期的学员。" : `有 ${data.renewingCount} 位学员需要续费：课时不足 8 节，或周期课程已过期。`} count={data.renewingCount} href="/owner/billing" action="去跟进 →" green />
-            <Todo icon="▣" title="教学记录完成情况" body={data.lessons.length === 0 ? "今天没有需要填写的课次。" : data.missingRecords === 0 ? "今天的课次都已经有课堂记录。" : `今天仍有 ${data.missingRecords} 节课未提交课堂记录。`} count={data.missingRecords} href="/owner/schedule" action="查看进度 →" />
+            <Todo icon="✳" title="AI 教学报告待确认" body={reportHint} count={data.pendingReports} href="/owner/reports?status=待确认" action="去查看 →" />
+            <Todo icon="¥" title="学员续费跟进" body={data.renewingCount === 0 ? "目前没有课时不足或周期课程已过期的学员。" : `有 ${data.renewingCount} 位学员需要续费：课时不足 8 节，或周期课程已过期。`} count={data.renewingCount} href="/owner/billing?status=待续费" action="去跟进 →" green />
+            <Todo icon="▣" title="教学记录完成情况" body={data.lessons.length === 0 ? "今天没有需要填写的课次。" : data.missingRecords > 0 ? `今天已结束的课次里，仍有 ${data.missingRecords} 节未提交课堂记录。` : data.lessons.some((lesson) => !lesson.teachingRecord) ? "还没结束的课次，结束后再填写记录。" : "今天已结束的课次都已经有课堂记录。"} count={data.missingRecords} href={pendingRecords} action="查看进度 →" />
           </ul>
         </section>
         <section className="overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
@@ -139,22 +142,31 @@ export default async function OwnerHomePage() {
             {data.enrollmentsThisMonth === 0 ? <p className="mt-8 text-center text-xs leading-6 text-[var(--muted)]">本月还没有报名记录，柱子保持为 0。</p> : null}
           </div>
         </section>
+        <section className="flex min-h-52 flex-1 flex-col overflow-hidden rounded-2xl border border-[var(--line)] bg-white xl:min-h-0">
+          <div className="border-b border-[#edf0ee] px-5 py-4">
+            <h2 className="text-sm font-semibold">近 6 个月收入趋势</h2>
+            <p className="mt-1 text-[11px] text-[var(--muted)]">按报名记录的实收时间，汇总每个月的实收金额。</p>
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col px-4 py-3">
+            <RevenueTrend points={data.revenue} />
+          </div>
+        </section>
         </div>
       </div>
     </section>
   );
 }
 
-function StatCard({ icon, label, value, foot, up = false }: { icon: string; label: string; value: number; foot: string; up?: boolean }) {
+function StatCard({ href, icon, label, value, foot, up = false }: { href: string; icon: string; label: string; value: number; foot: string; up?: boolean }) {
   return (
-    <article className="rounded-2xl border border-[var(--line)] bg-white p-5">
+    <Link href={href} className="block cursor-pointer rounded-2xl border border-[var(--line)] bg-white p-5 transition hover:shadow-[0_8px_24px_rgba(24,42,53,.08)]">
       <div className="flex items-center justify-between text-xs text-[var(--muted)]">
         <span>{label}</span>
         <span className="grid h-8 w-8 place-items-center rounded-[10px] bg-[var(--teal-2)] text-base">{icon}</span>
       </div>
       <div className="mt-3 text-[29px] font-extrabold tracking-tight">{value}</div>
       <p className={`mt-1 text-[11px] ${up ? "font-bold text-[var(--teal)]" : "text-[var(--muted)]"}`}>{foot}</p>
-    </article>
+    </Link>
   );
 }
 

@@ -41,7 +41,8 @@ export default async function ParentAttendancePage() {
                   <th className="px-4 py-3 font-extrabold">课次</th>
                   <th className="px-4 py-3 font-extrabold">孩子</th>
                   <th className="px-4 py-3 font-extrabold">教师</th>
-                  <th className="px-4 py-3 font-extrabold">出勤</th>
+                  <th className="px-4 py-3 font-extrabold">考勤状态</th>
+                  <th className="px-4 py-3 font-extrabold">备注原因</th>
                 </tr>
               </thead>
               <tbody>
@@ -51,7 +52,8 @@ export default async function ParentAttendancePage() {
                     <td className="px-4 py-4 font-bold">{row.lessonSession.title ?? row.lessonSession.course.name}</td>
                     <td className="px-4 py-4">{row.student.name}</td>
                     <td className="px-4 py-4">{row.lessonSession.teacher.name}</td>
-                    <td className="px-4 py-4">{attendanceLabel[row.attendanceStatus]}{row.attendanceNote ? ` · ${row.attendanceNote}` : ""}</td>
+                    <td className={`px-4 py-4 ${row.attendanceStatus === "PRESENT" ? "font-bold text-[#34725d]" : row.attendanceStatus === "LEAVE" ? "font-bold text-[#c27b35]" : row.attendanceStatus === "ABSENT" ? "font-bold text-[#b94d4d]" : row.attendanceStatus === "LATE" ? "font-bold text-[#9a6729]" : ""}`}>{attendanceLabel[row.attendanceStatus]}</td>
+                    <td className="px-4 py-4 text-[var(--muted)]">{row.attendanceNote?.trim() || "无备注"}</td>
                   </tr>
                 ))}
               </tbody>

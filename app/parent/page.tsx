@@ -25,9 +25,12 @@ export default async function ParentHomePage() {
                   <div className="text-sm font-bold">{link.student.name}</div>
                   <div className="mt-1 text-xs text-[var(--muted)]">{link.student.grade ?? "未填写年级"} · {link.student.studentNo ?? "无编号"}</div>
                 </div>
-                <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${link.student.status === "ACTIVE" ? "bg-[#edf5f1] text-[#34725d]" : "bg-[#fff2df] text-[#9a6729]"}`}>
-                  {link.student.status === "ACTIVE" ? "在读" : "已停用"}
-                </span>
+                <div className="text-right">
+                  <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${link.student.status === "ACTIVE" ? "bg-[#edf5f1] text-[#34725d]" : "bg-[#eef1ee] text-[#74838b]"}`}>
+                    {link.student.status === "ACTIVE" ? "在读" : "已停用"}
+                  </span>
+                  {link.student.status === "INACTIVE" ? <div className="mt-1 text-xs text-[#74838b]">停用原因：{link.student.archiveReason?.trim() || "未填写"}</div> : null}
+                </div>
               </li>
             ))}
           </ul>

@@ -1,5 +1,5 @@
 import { OwnerBilling, type BillingStudent } from "@/components/owner-billing";
-import { lowHourThreshold, periodNeedsRenewal, periodValidity, calendarDateKey } from "@/lib/course-hours";
+import { canDeactivateEnrollment, lowHourThreshold, periodNeedsRenewal, periodValidity, calendarDateKey } from "@/lib/course-hours";
 import { requireRole } from "@/lib/auth";
 import { dayRange, shanghaiDateKey } from "@/lib/datetime";
 import { prisma } from "@/lib/prisma";
@@ -48,10 +48,11 @@ function orderBillingRows(rows: BillingStudent[], courseNames: string[]) {
 export default async function OwnerBillingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ sortBy?: string | string[]; order?: string | string[] }>;
+  searchParams: Promise<{ status?: string; sortBy?: string | string[]; order?: string | string[] }>;
 }) {
   const user = await requireRole("OWNER", "owner");
   const params = await searchParams;
+  const renewalOnly = params.status === "待续费";
   const sort = readSort(params.sortBy, params.order, billingSortFields);
   const month = monthRange(shanghaiDateKey());
   const [students, courses, thisMonth, lastMonth, income, review] = await Promise.all([
@@ -79,7 +80,12 @@ export default async function OwnerBillingPage({
     prisma.course.findMany({
       where: { organizationId: user.organizationId, status: "ACTIVE" },
       orderBy: { name: sort?.sortBy === "course" ? sort.order : "asc" },
-      select: { id: true, name: true, billingType: true },
+      select: {
+        id: true,
+        name: true,
+        billingType: true,
+        classGroups: { where: { status: "ACTIVE" }, select: { id: true, name: true }, orderBy: { name: "asc" } },
+      },
     }),
     prisma.enrollment.count({ where: { organizationId: user.organizationId, createdAt: { gte: month.start, lt: month.end } } }),
     prisma.enrollment.count({ where: { organizationId: user.organizationId, createdAt: { gte: month.previousStart, lt: month.start } } }),
@@ -125,6 +131,7 @@ export default async function OwnerBillingPage({
         lastPaid: "还没有缴费",
         enrolled: false,
         followUp: false,
+        canDeactivate: false,
       });
       continue;
     }
@@ -143,16 +150,24 @@ export default async function OwnerBillingPage({
         lastPaid: course.paidAt ? course.paidAt.toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" }) : "还没有缴费",
         enrolled: true,
         followUp: period ? periodNeedsRenewal(period.status) : lowHours,
+        canDeactivate: canDeactivateEnrollment({
+          billingType: course.billingType,
+          remainingHours,
+          periodStatus: period?.status ?? null,
+        }),
+        courseId,
       });
     }
   }
   const renewing = new Set(rows.filter((row) => row.followUp).map((row) => row.id)).size;
-  const tableRows = sort?.sortBy === "course" ? orderBillingRows(rows, courses.map((course) => course.name)) : rows;
+  const visibleRows = renewalOnly ? rows.filter((row) => row.followUp) : rows;
+  const tableRows = sort?.sortBy === "course" ? orderBillingRows(visibleRows, courses.map((course) => course.name)) : visibleRows;
   const formCourses = sort?.sortBy === "course" && sort.order === "desc" ? [...courses].reverse() : courses;
 
   return (
     <OwnerBilling
       courses={formCourses}
+      renewalOnly={renewalOnly}
       sortBy={sort?.sortBy ?? null}
       order={sort?.order ?? null}
       stats={{ enrollments: thisMonth, compare, income: yuan(income._sum.amount), renewing, review }}
