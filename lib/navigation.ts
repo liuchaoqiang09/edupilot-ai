@@ -27,7 +27,7 @@ export const navigation: Record<WorkspaceArea, NavItem[]> = {
     { href: "/owner/courses", label: "课程与班级", icon: "▦", description: "课程类型和班级分开管理，名称由机构自己创建。" },
     { href: "/owner/schedule", label: "排课 / 课表", icon: "▣", description: "按日期安排课次，并指定教师和学生名单。" },
     { href: "/owner/reports", label: "教学报告", icon: "✳", description: "查看教师提交的报告，必要时退回修改。" },
-    { href: "/owner/billing", label: "报名与课时", icon: "¥", description: "记录报名、实收金额和剩余课时。出勤后会扣减课时。" },
+    { href: "/owner/billing", label: "报名与课时", icon: "¥", description: "记录报名、实收金额和剩余课时。出勤、迟到或缺勤会扣减课时。" },
     { href: "/owner/stats", label: "基础统计", icon: "▤", description: "查看出勤、课次和报告完成情况。数字只来自数据库。" },
     { href: "/owner/settings", label: "机构设置", icon: "⚙", description: "维护机构名称和报告偏好。可以以后再补全。" },
     { href: "/owner/account", label: "账号管理", icon: "☺", description: "查看自己的登录账号并修改自己的密码。不能修改老师或家长的密码。" },

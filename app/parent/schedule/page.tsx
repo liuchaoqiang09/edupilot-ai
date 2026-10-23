@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DateField } from "@/components/date-field";
 import { requireRole } from "@/lib/auth";
 import { dayRange, formatClock, formatDateLabel, parseDateKey, shiftDate } from "@/lib/datetime";
 import { attendanceLabel, lessonStatusLabel } from "@/lib/lesson-labels";
@@ -47,7 +48,7 @@ export default async function ParentSchedulePage({
       <div className="mt-6 flex flex-wrap items-center gap-2">
         <Link href={`/parent/schedule?date=${shiftDate(date, -1)}`} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold">前一天</Link>
         <form action="/parent/schedule" className="flex items-center gap-2">
-          <input type="date" name="date" defaultValue={date} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold" />
+          <DateField name="date" defaultValue={date} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold" />
           <button className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold">查看</button>
         </form>
         <Link href={`/parent/schedule?date=${shiftDate(date, 1)}`} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold">后一天</Link>

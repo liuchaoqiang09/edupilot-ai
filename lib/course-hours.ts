@@ -49,6 +49,7 @@ export async function syncAttendanceCharge(
 ) {
   const note = input.attendanceNote;
   const shouldCharge = input.billingType === "PER_PERIOD" ? false : input.shouldCharge;
+  const chargeAction = input.attendanceStatus === "ABSENT" ? "缺勤扣减 1 课时" : input.attendanceStatus === "LATE" ? "迟到扣减 1 课时" : "出勤扣减 1 课时";
   if (shouldCharge) {
     const marked = await tx.lessonStudent.updateMany({
       where: { id: input.lessonStudentId, organizationId: input.organizationId, studentId: input.studentId, hoursCharged: false },
@@ -56,7 +57,7 @@ export async function syncAttendanceCharge(
         hoursCharged: true,
         attendanceStatus: input.attendanceStatus,
         attendanceNote: note,
-        lastAction: "出勤扣减 1 课时",
+        lastAction: chargeAction,
       },
     });
     if (marked.count === 0) {

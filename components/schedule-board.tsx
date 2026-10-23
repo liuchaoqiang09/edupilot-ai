@@ -5,9 +5,11 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useMemo, useState, useTransition } from "react";
 import { cancelLesson, createLesson, createRecurringLessons, removeLessonStudent, updateLessonTeacher, type FieldErrors, type RecurringFieldErrors } from "@/app/owner/schedule/actions";
 import { shiftDate } from "@/lib/datetime";
+import { DateField, DateTimeField } from "@/components/date-field";
 import { FieldError, TextField } from "@/components/form-fields";
 import { Modal } from "@/components/modal";
 import { AttendanceBreakdown, AttendanceRing, attendanceRate } from "@/components/attendance-ring";
+import { LessonClock } from "@/components/lesson-clock";
 import { LessonRosterPicker } from "@/components/lesson-roster-picker";
 import { attendanceLabel, lessonStatusLabel } from "@/lib/lesson-labels";
 import { WeekGrid } from "@/components/week-grid";
@@ -52,6 +54,7 @@ export type ScheduleLesson = {
     id: string;
     name: string;
     grade: string | null;
+    age: number | null;
     parentContact: string;
     attendanceStatus: keyof typeof attendanceLabel;
     attendanceNote: string | null;
@@ -282,7 +285,7 @@ export function ScheduleBoard({
             <form action="/owner/schedule" className="flex items-center gap-2">
               <input type="hidden" name="view" value="day" />
               {pendingRecords ? <input type="hidden" name="status" value="待填写" /> : null}
-              <input type="date" name="date" defaultValue={date} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold" />
+              <DateField name="date" defaultValue={date} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold" />
               <button className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold">查看</button>
             </form>
             <Link href={`/owner/schedule?view=day&date=${nextDate}${pendingRecords ? "&status=待填写" : ""}`} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold">后一天</Link>
@@ -326,12 +329,8 @@ export function ScheduleBoard({
               const marked = lesson.students.filter((student) => student.attendanceStatus !== "NOT_MARKED").length;
               const palette = coursePalette(lesson.courseId);
               return (
-                <li key={lesson.id} className="grid grid-cols-[64px_4px_minmax(0,1fr)_auto] items-center gap-3 border-b border-[#f0f2f0] bg-white py-4 last:border-b-0">
-                  <div className="text-xs font-extrabold">
-                    {spanDates || next7Days ? <small className="mb-1 block font-medium text-[var(--muted)]">{lesson.dateLabel}</small> : null}
-                    {lesson.startLabel}
-                    <small className="mt-1 block font-medium text-[var(--muted)]">{lesson.endLabel}</small>
-                  </div>
+                <li key={lesson.id} className="grid grid-cols-[76px_4px_minmax(0,1fr)_auto] items-center gap-3 border-b border-[#f0f2f0] bg-white py-4 last:border-b-0">
+                  <LessonClock start={lesson.startLabel} end={lesson.endLabel} date={spanDates || next7Days ? lesson.dateLabel : undefined} />
                   <div className="h-10 w-1 rounded" style={{ background: palette.accent }} />
                   <div className="min-w-0">
                     <div className="text-xs font-bold">{lesson.title}</div>
@@ -387,12 +386,12 @@ export function ScheduleBoard({
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="grid gap-1.5 text-xs font-bold">
                   开始日期 <span className="font-medium text-[#9a6729]">必填</span>
-                  <input type="date" name="startDate" required defaultValue={date} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]" />
+                  <DateField name="startDate" required defaultValue={date} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]" />
                   <FieldError message={recurringErrors.startDate} />
                 </label>
                 <label className="grid gap-1.5 text-xs font-bold">
                   结束日期 <span className="font-medium text-[#9a6729]">必填</span>
-                  <input type="date" name="endDate" required defaultValue={shiftDate(date, 120)} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]" />
+                  <DateField name="endDate" required defaultValue={shiftDate(date, 120)} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]" />
                   <FieldError message={recurringErrors.endDate} />
                 </label>
               </div>
@@ -487,12 +486,12 @@ export function ScheduleBoard({
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="grid gap-1.5 text-xs font-bold">
                   开始时间 <span className="font-medium text-[#9a6729]">必填</span>
-                  <input type="datetime-local" name="startAt" required defaultValue={`${date}T16:00`} onChange={() => setConflictWarning("")} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]" />
+                  <DateTimeField name="startAt" required defaultValue={`${date}T16:00`} onChange={() => setConflictWarning("")} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]" />
                   <FieldError message={fieldErrors.startAt} />
                 </label>
                 <label className="grid gap-1.5 text-xs font-bold">
                   结束时间 <span className="font-medium text-[#9a6729]">必填</span>
-                  <input type="datetime-local" name="endAt" required defaultValue={`${date}T17:30`} onChange={() => setConflictWarning("")} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]" />
+                  <DateTimeField name="endAt" required defaultValue={`${date}T17:30`} onChange={() => setConflictWarning("")} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]" />
                   <FieldError message={fieldErrors.endAt} />
                 </label>
               </div>
@@ -617,7 +616,8 @@ export function ScheduleBoard({
         <Modal title="考勤详情" onClose={() => setAttendanceDetail(null)}>
           <div className="space-y-3 px-5 py-5 text-sm">
             <div><div className="text-xs font-bold">学生姓名</div><p className="mt-1">{attendanceDetail.name}</p></div>
-            <div><div className="text-xs font-bold">年级</div><p className="mt-1 text-[var(--muted)]">{attendanceDetail.grade ?? "未填写年级"}</p></div>
+            <div><div className="text-xs font-bold">年级</div><p className="mt-1 text-[var(--muted)]">{attendanceDetail.grade ?? "未填写"}</p></div>
+            <div><div className="text-xs font-bold">年龄</div><p className="mt-1 text-[var(--muted)]">{attendanceDetail.age ? `${attendanceDetail.age}岁` : "未填写"}</p></div>
             <div><div className="text-xs font-bold">考勤状态</div><p className={`mt-1 ${attendanceTone[attendanceDetail.attendanceStatus] ?? ""}`}>{attendanceLabel[attendanceDetail.attendanceStatus]}</p></div>
             <div><div className="text-xs font-bold">备注原因</div><p className="mt-1 leading-6 text-[var(--muted)]">{attendanceDetail.attendanceNote?.trim() || "老师没有填写备注。"}</p></div>
             <div><div className="text-xs font-bold">家长联系方式</div><p className="mt-1 leading-6 text-[var(--muted)]">{attendanceDetail.parentContact}</p></div>

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { AttendanceBreakdown, AttendanceRing, attendanceRate } from "@/components/attendance-ring";
+import { LessonClock } from "@/components/lesson-clock";
 import { Modal } from "@/components/modal";
 import { attendanceLabel } from "@/lib/lesson-labels";
 
@@ -45,12 +46,9 @@ export function OwnerTodayLessons({ lessons }: { lessons: TodayLessonCard[] }) {
               <button
                 type="button"
                 onClick={() => setViewing(lesson)}
-                className="grid w-full cursor-pointer grid-cols-[58px_4px_minmax(0,1fr)_auto] items-center gap-3 py-4 text-left transition hover:bg-[#f4faf7]"
+                className="grid w-full cursor-pointer grid-cols-[76px_4px_minmax(0,1fr)_auto] items-center gap-3 py-4 text-left transition hover:bg-[#f4faf7]"
               >
-                <div className="text-xs font-extrabold">
-                  {lesson.startLabel}
-                  <small className="mt-1 block font-medium text-[var(--muted)]">{lesson.endLabel}</small>
-                </div>
+                <LessonClock start={lesson.startLabel} end={lesson.endLabel} />
                 <span className={`h-10 rounded ${["bg-[#91c8b5]", "bg-[#e8b56d]", "bg-[#b7a6e3]"][index % 3]}`} />
                 <div className="min-w-0">
                   <div className="truncate text-sm font-bold">{lesson.courseName} · {lesson.title}</div>

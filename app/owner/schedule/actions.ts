@@ -83,6 +83,7 @@ export async function searchOtherStudents(classGroupId: string, query: string): 
       id: true,
       name: true,
       grade: true,
+      age: true,
       enrollments: {
         where: { courseId: classGroup.courseId },
         select: { status: true },
@@ -97,6 +98,7 @@ export async function searchOtherStudents(classGroupId: string, query: string): 
     id: student.id,
     name: student.name,
     grade: student.grade,
+    age: student.age,
     enrollmentLabel: enrollmentLabel(student.enrollments[0]?.status),
   }));
 }

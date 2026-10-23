@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { loadClassRoster, searchOtherStudents } from "@/app/owner/schedule/actions";
 import { FieldError } from "@/components/form-fields";
+import { studentFacts, unenrolledBadgeClass } from "@/lib/student-profile";
 import type { RosterStudent } from "@/lib/roster-student";
 
 export function LessonRosterPicker({
@@ -169,8 +170,8 @@ export function LessonRosterPicker({
               className="accent-[var(--teal)]"
             />
             <span className="font-bold">{student.name}</span>
-            <span className="text-xs text-[var(--muted)]">{student.grade ?? "未填写年级"}</span>
-            <span className="ml-auto text-xs text-[#385058]">{student.enrollmentLabel}</span>
+            <span className="text-xs text-[var(--muted)]">{studentFacts(student.grade, student.age)}</span>
+            <span className={`ml-auto text-xs font-bold ${student.enrollmentLabel === "未报名" ? unenrolledBadgeClass + " rounded-full px-2 py-1" : "text-[#385058]"}`}>{student.enrollmentLabel}</span>
           </label>
         ))}
       </div>

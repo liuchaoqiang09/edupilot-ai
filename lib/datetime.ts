@@ -41,6 +41,15 @@ export function formatClock(date: Date) {
   }).format(date);
 }
 
+export function dayPartLabel(clock: string) {
+  const match = clock.match(/(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  const minutes = Number(match[1]) * 60 + Number(match[2]);
+  if (minutes >= 5 * 60 && minutes < 12 * 60) return "上午";
+  if (minutes >= 12 * 60 && minutes < 18 * 60) return "下午";
+  return "晚上";
+}
+
 export function formatDateTime(date: Date) {
   return new Intl.DateTimeFormat("zh-CN", {
     timeZone: SHANGHAI,

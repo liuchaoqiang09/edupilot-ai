@@ -21,7 +21,7 @@ export async function classRoster(organizationId: string, classGroupId: string):
       studentId: true,
       status: true,
       createdAt: true,
-      student: { select: { name: true, grade: true } },
+      student: { select: { name: true, grade: true, age: true } },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -32,6 +32,7 @@ export async function classRoster(organizationId: string, classGroupId: string):
       id: row.studentId,
       name: row.student.name,
       grade: row.student.grade,
+      age: row.student.age,
       enrollmentLabel: enrollmentLabel(row.status),
     });
   }

@@ -8,10 +8,24 @@ export function TeacherInviteButton({ teacherId, label = "生成教师邀请码"
 }
 
 export function ParentInviteButton({ studentId }: { studentId: string }) {
-  return <InviteButton label="生成家长绑定码" action={() => issueParentInvite(studentId)} />;
+  return (
+    <InviteButton
+      label="生成家长邀请码"
+      note="请将此邀请码发给家长，家长注册时将自动关联到该学生。"
+      action={() => issueParentInvite(studentId)}
+    />
+  );
 }
 
-function InviteButton({ label, action }: { label: string; action: () => Promise<{ ok: boolean; message?: string; code?: string }> }) {
+function InviteButton({
+  label,
+  action,
+  note,
+}: {
+  label: string;
+  action: () => Promise<{ ok: boolean; message?: string; code?: string }>;
+  note?: string;
+}) {
   const [pending, startTransition] = useTransition();
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
@@ -35,7 +49,12 @@ function InviteButton({ label, action }: { label: string; action: () => Promise<
       >
         {pending ? "正在生成…" : label}
       </button>
-      {code ? <p className="text-xs leading-5 text-[var(--muted)]">邀请码只显示这一次：<strong className="text-[var(--ink)]">{code}</strong>。7 天内有效，使用一次后失效。</p> : null}
+      {code ? (
+        <p className="text-xs leading-5 text-[var(--muted)]">
+          {note ? <span className="block">{note}</span> : null}
+          邀请码只显示这一次：<strong className="text-[var(--ink)]">{code}</strong>。7 天内有效，使用一次后失效。
+        </p>
+      ) : null}
       {error ? <p className="text-xs text-[#b94d4d]">{error}</p> : null}
     </div>
   );

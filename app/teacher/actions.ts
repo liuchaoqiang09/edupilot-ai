@@ -41,7 +41,7 @@ export async function saveAttendance(lessonId: string, formData: FormData): Prom
   if (updates.some((row) => !statuses.has(row.status))) return { ok: false, message: "考勤状态无效。" };
   if (updates.some((row) => row.note.length > 80)) return { ok: false, message: "备注不能超过 80 个字。" };
 
-  const charged = new Set(["PRESENT", "LATE"]);
+  const charged = new Set(["PRESENT", "LATE", "ABSENT"]);
   try {
     await prisma.$transaction(async (tx) => {
       for (const row of updates) {

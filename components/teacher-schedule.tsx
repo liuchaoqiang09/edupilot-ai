@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState, useTransition } from "react";
 import { saveAttendance } from "@/app/teacher/actions";
+import { DateField } from "@/components/date-field";
 import { Modal } from "@/components/modal";
 import { WeekGrid } from "@/components/week-grid";
 import { coursePalette } from "@/lib/course-colors";
@@ -140,7 +141,7 @@ export function TeacherSchedule({
             <Link href={`/teacher/schedule?view=day&date=${previousDate}`} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold">前一天</Link>
             <form action="/teacher/schedule" className="flex items-center gap-2">
               <input type="hidden" name="view" value="day" />
-              <input type="date" name="date" defaultValue={date} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold" />
+              <DateField name="date" defaultValue={date} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold" />
               <button className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold">查看</button>
             </form>
             <Link href={`/teacher/schedule?view=day&date=${nextDate}`} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold">后一天</Link>

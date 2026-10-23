@@ -6,6 +6,18 @@ import { readSort } from "@/lib/table-sort";
 
 const studentSortFields = ["name", "studentNo"] as const;
 
+function enrollmentLabels(enrollments: { course: { name: string }; classGroup: { name: string } | null }[]) {
+  const labels: string[] = [];
+  const seen = new Set<string>();
+  for (const enrollment of enrollments) {
+    const label = enrollment.classGroup ? `${enrollment.course.name} · ${enrollment.classGroup.name}` : enrollment.course.name;
+    if (seen.has(label)) continue;
+    seen.add(label);
+    labels.push(label);
+  }
+  return labels;
+}
+
 export default async function StudentsPage({
   searchParams,
 }: {
@@ -24,7 +36,8 @@ export default async function StudentsPage({
     prisma.student.findMany({
       where: {
         organizationId: user.organizationId,
-        ...(statusFilter ? { status: statusFilter === "在读" ? "ACTIVE" as const : "INACTIVE" as const } : {}),
+        ...(statusFilter === "已停用" ? { status: "INACTIVE" as const } : {}),
+        ...(statusFilter === "在读" ? { status: "ACTIVE" as const, enrollments: { some: {} } } : {}),
         ...(query
           ? {
               OR: [
@@ -35,10 +48,19 @@ export default async function StudentsPage({
           : {}),
       },
       orderBy,
+      include: {
+        enrollments: {
+          orderBy: { createdAt: "desc" },
+          select: {
+            course: { select: { name: true } },
+            classGroup: { select: { name: true } },
+          },
+        },
+      },
     }),
     prisma.user.findMany({
       where: { organizationId: user.organizationId, roles: { has: "PARENT" } },
-      select: { id: true, name: true, email: true },
+      select: { id: true, name: true, email: true, phone: true },
       orderBy: { name: "asc" },
     }),
     prisma.parentStudentLink.findMany({
@@ -67,9 +89,12 @@ export default async function StudentsPage({
         name: student.name,
         studentNo: student.studentNo,
         grade: student.grade,
+        age: student.age,
+        guardianName: student.guardianName,
         contactNote: student.contactNote,
         status: student.status,
         archiveReason: student.archiveReason,
+        courses: enrollmentLabels(student.enrollments),
       }))}
     />
   );

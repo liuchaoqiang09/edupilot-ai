@@ -124,6 +124,13 @@ test("course hours stay separate and survive repeat, refund, shortage, concurren
     assert.equal(refunded?.hoursCharged, false);
     assert.equal(refunded?.attendanceStatus, "LEAVE");
 
+    await prisma.$transaction((tx) => syncAttendanceCharge(tx, { ...chargeMath, shouldCharge: true, attendanceStatus: "ABSENT" }));
+    assert.equal(await balance(data.student.id, data.math.id), 1);
+    const absent = await prisma.lessonStudent.findUnique({ where: { id: mathRoster.id }, select: { hoursCharged: true, attendanceStatus: true, lastAction: true } });
+    assert.equal(absent?.hoursCharged, true);
+    assert.equal(absent?.attendanceStatus, "ABSENT");
+    assert.equal(absent?.lastAction, "缺勤扣减 1 课时");
+
     await prisma.$transaction((tx) => syncAttendanceCharge(tx, { ...chargeMath, shouldCharge: false, attendanceStatus: "ABSENT" }));
     assert.equal(await balance(data.student.id, data.math.id), 2);
 

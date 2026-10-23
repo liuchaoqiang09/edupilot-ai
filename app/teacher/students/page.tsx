@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireRole } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { studentFacts, studyBadge } from "@/lib/student-profile";
 
 export default async function TeacherStudentsPage({
   searchParams,
@@ -17,7 +18,7 @@ export default async function TeacherStudentsPage({
   const rows = teacher
     ? await prisma.lessonStudent.findMany({
         where: { organizationId: user.organizationId, lessonSession: { teacherId: teacher.id } },
-        select: { student: { select: { id: true, name: true, grade: true, studentNo: true, status: true, archiveReason: true } } },
+        select: { student: { select: { id: true, name: true, grade: true, age: true, studentNo: true, status: true, archiveReason: true, _count: { select: { enrollments: true } } } } },
       })
     : [];
   const students = [...new Map(rows.map((row) => [row.student.id, row.student])).values()]
@@ -47,7 +48,7 @@ export default async function TeacherStudentsPage({
               <li key={student.id} className="flex flex-wrap items-center justify-between gap-3 border-b border-[#eef1ee] px-5 py-4 last:border-b-0">
                 <div>
                   <div className="text-sm font-bold">{student.name}</div>
-                  <div className="mt-1 text-xs text-[var(--muted)]">{student.grade ?? "未填写年级"} · {student.studentNo ?? "无编号"}</div>
+                  <div className="mt-1 text-xs text-[var(--muted)]">{studentFacts(student.grade, student.age)} · {student.studentNo ?? "无编号"}</div>
                 </div>
                 {student.status === "INACTIVE" ? (
                   <div className="text-right">
@@ -55,7 +56,9 @@ export default async function TeacherStudentsPage({
                     <div className="mt-1 text-xs text-[#74838b]">停用原因：{student.archiveReason?.trim() || "未填写"}</div>
                   </div>
                 ) : (
-                  <span className="rounded-full bg-[#edf5f1] px-2 py-1 text-[10px] font-bold text-[#34725d]">在读</span>
+                  <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${studyBadge(student.status, student._count.enrollments > 0).className}`}>
+                    {studyBadge(student.status, student._count.enrollments > 0).label}
+                  </span>
                 )}
               </li>
             ))}

@@ -5,15 +5,19 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useState, useTransition } from "react";
 import { createEnrollment } from "@/app/owner/billing/actions";
 import { deactivateStudent } from "@/app/owner/students/actions";
+import { DateField, isCalendarDate } from "@/components/date-field";
 import { Modal } from "@/components/modal";
 import { SortHeader } from "@/components/sort-header";
+import { StudentCombobox, type DirectoryStudent } from "@/components/student-combobox";
 import type { SortOrder } from "@/lib/table-sort";
+import { parseAge, studentFacts, unenrolledBadgeClass } from "@/lib/student-profile";
 
 export type BillingStudent = {
   rowKey: string;
   id: string;
   name: string;
   grade: string | null;
+  age: number | null;
   courseName: string;
   usage: string;
   usageStatus: string;
@@ -26,8 +30,33 @@ export type BillingStudent = {
 
 const fieldClass = "rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]";
 
+type EnrollmentDraft = {
+  key: string;
+  courseId: string;
+  classGroupId: string;
+  amountDue: string;
+  amount: string;
+  hoursAdded: string;
+  startDate: string;
+  endDate: string;
+};
+
+function blankLine(courseId = ""): EnrollmentDraft {
+  return {
+    key: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    courseId,
+    classGroupId: "",
+    amountDue: "0.00",
+    amount: "0.00",
+    hoursAdded: "12",
+    startDate: "",
+    endDate: "",
+  };
+}
+
 export function OwnerBilling({
   students,
+  directory,
   courses,
   stats,
   renewalOnly = false,
@@ -35,6 +64,7 @@ export function OwnerBilling({
   order,
 }: {
   students: BillingStudent[];
+  directory: DirectoryStudent[];
   courses: { id: string; name: string; billingType: "PER_LESSON" | "PER_PERIOD"; classGroups: { id: string; name: string }[] }[];
   stats: { enrollments: number; compare: string; income: string; renewing: number; review: number };
   renewalOnly?: boolean;
@@ -45,24 +75,109 @@ export function OwnerBilling({
   const [open, setOpen] = useState(false);
   const [retiring, setRetiring] = useState<BillingStudent | null>(null);
   const [reason, setReason] = useState("");
+  const [mode, setMode] = useState<"new" | "existing">("new");
   const [studentId, setStudentId] = useState("");
-  const [courseId, setCourseId] = useState("");
-  const [classGroupId, setClassGroupId] = useState("");
+  const [studentName, setStudentName] = useState("");
+  const [guardianName, setGuardianName] = useState("");
+  const [grade, setGrade] = useState("");
+  const [age, setAge] = useState("");
+  const [lines, setLines] = useState<EnrollmentDraft[]>([blankLine()]);
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState("");
   const [failed, setFailed] = useState(false);
   const followUps = stats.renewing;
 
+  function openEnrollment(nextStudentId = "", courseId = "") {
+    setMode(nextStudentId ? "existing" : "new");
+    setStudentId(nextStudentId);
+    setStudentName("");
+    setGuardianName(directory.find((student) => student.id === nextStudentId)?.guardianName ?? "");
+    setGrade("");
+    setAge("");
+    setLines([blankLine(courseId)]);
+    setMessage("");
+    setFailed(false);
+    setOpen(true);
+  }
+
+  function updateLine(key: string, patch: Partial<EnrollmentDraft>) {
+    setLines((current) => current.map((line) => (line.key === key ? { ...line, ...patch } : line)));
+  }
+
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const formData = new FormData(event.currentTarget);
+    if (mode === "new" && studentName.trim().length === 0) {
+      setFailed(true);
+      setMessage("请填写学生姓名。");
+      return;
+    }
+    const parsedAge = parseAge(age);
+    if (mode === "new" && parsedAge.error) {
+      setFailed(true);
+      setMessage(parsedAge.error);
+      return;
+    }
+    if (mode === "existing" && !studentId) {
+      setFailed(true);
+      setMessage("请选择学员。");
+      return;
+    }
+    if (guardianName.trim().length === 0) {
+      setFailed(true);
+      setMessage("请填写家长姓名。");
+      return;
+    }
+    if (guardianName.trim().length > 40) {
+      setFailed(true);
+      setMessage("家长姓名不能超过 40 个字。");
+      return;
+    }
+    for (const line of lines) {
+      const course = courses.find((item) => item.id === line.courseId);
+      if (!course) {
+        setFailed(true);
+        setMessage("请选择报名课程。");
+        return;
+      }
+      const classBelongs = course.classGroups.some((item) => item.id === line.classGroupId);
+      if (!classBelongs) {
+        setFailed(true);
+        setMessage("请选择报名班级");
+        return;
+      }
+      if (course.billingType === "PER_PERIOD" && (!isCalendarDate(line.startDate) || !isCalendarDate(line.endDate))) {
+        setFailed(true);
+        setMessage("请填写有效期开始时间和有效期结束时间。");
+        return;
+      }
+    }
+    const formData = new FormData();
+    formData.set("mode", mode);
+    formData.set("studentId", studentId);
+    formData.set("studentName", studentName.trim());
+    formData.set("guardianName", guardianName.trim());
+    formData.set("grade", grade.trim());
+    formData.set("age", age.trim());
+    formData.set("count", String(lines.length));
+    lines.forEach((line, index) => {
+      formData.set(`courseId:${index}`, line.courseId);
+      formData.set(`classGroupId:${index}`, line.classGroupId);
+      formData.set(`amountDue:${index}`, line.amountDue);
+      formData.set(`amount:${index}`, line.amount);
+      formData.set(`hoursAdded:${index}`, line.hoursAdded);
+      formData.set(`startDate:${index}`, line.startDate);
+      formData.set(`endDate:${index}`, line.endDate);
+    });
     setMessage("");
     setFailed(false);
     startTransition(async () => {
       const result = await createEnrollment(formData);
       setFailed(!result.ok);
       setMessage(result.message || (result.ok ? "已保存。" : "保存失败。"));
-      if (result.ok) setOpen(false);
+      if (result.ok) {
+        setOpen(false);
+        router.refresh();
+      }
     });
   }
 
@@ -90,7 +205,7 @@ export function OwnerBilling({
           <h1 className="text-[28px] font-semibold tracking-tight">报名与课时</h1>
           <p className="mt-2 max-w-2xl text-sm leading-7 text-[var(--muted)]">按课时的课程记录剩余节数。按周期的课程记录有效期，出勤不扣课时。</p>
         </div>
-        <button type="button" onClick={() => { setOpen(true); setStudentId(""); setCourseId(""); setClassGroupId(""); setMessage(""); }} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white">＋ 记录报名</button>
+        <button type="button" onClick={() => openEnrollment()} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white">＋ 记录报名</button>
       </div>
       {message && !open ? <p className={`mt-4 rounded-xl px-4 py-3 text-xs leading-6 ${failed ? "bg-[#fff4ec] text-[#9a4b24]" : "bg-[#f0f6ee] text-[#4e6c5c]"}`}>{message}</p> : null}
 
@@ -98,7 +213,7 @@ export function OwnerBilling({
         <Card icon="♙" label="本月报名" value={String(stats.enrollments)} foot={stats.compare} />
         <Card icon="¥" label="本月实收记录" value={stats.income} foot="根据已保存的实收金额汇总" />
         <Card icon="◷" label="即将续费" value={String(stats.renewing)} foot="课时不足 8 节，或周期课程已过期" />
-        <Card icon="!" label="课时待核对" value={String(stats.review)} foot="本月请假或缺勤，未扣课时" />
+        <Card icon="!" label="课时待核对" value={String(stats.review)} foot="本月请假，未扣课时" />
       </div>
 
       <section className="mt-4 overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
@@ -133,7 +248,7 @@ export function OwnerBilling({
                         <span className="grid h-8 w-8 place-items-center rounded-full bg-[#dcece5] text-xs font-extrabold text-[#215a52]">{student.name.slice(0, 1)}</span>
                         <span>
                           <strong className="block">{student.name}</strong>
-                          <span className="text-[11px] text-[var(--muted)]">{student.grade ?? "未填写年级"}</span>
+                          <span className="text-[11px] text-[var(--muted)]">{studentFacts(student.grade, student.age)}</span>
                         </span>
                       </div>
                     </td>
@@ -141,12 +256,12 @@ export function OwnerBilling({
                     <td className="px-4 py-3">{student.usage}</td>
                     <td className="px-4 py-3">{student.lastPaid}</td>
                     <td className="px-4 py-3">
-                      <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${student.followUp ? "bg-[#fff2df] text-[#9a6729]" : "bg-[#edf5f1] text-[#34725d]"}`}>
+                      <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${student.usageStatus === "未报名" ? unenrolledBadgeClass : student.followUp ? "bg-[#fff2df] text-[#9a6729]" : "bg-[#edf5f1] text-[#34725d]"}`}>
                         {student.usageStatus}
                       </span>
                     </td>
                     <td className="px-4 py-3">
-                      <button type="button" onClick={() => { setStudentId(student.id); setCourseId(student.courseId ?? ""); setClassGroupId(""); setOpen(true); setMessage(""); }} className="font-bold text-[var(--teal)]">记录报名</button>
+                      <button type="button" onClick={() => openEnrollment(student.id, student.courseId ?? "")} className="font-bold text-[var(--teal)]">记录报名</button>
                       {student.canDeactivate && student.courseId ? (
                         <button type="button" onClick={() => { setRetiring(student); setReason(""); setMessage(""); setFailed(false); }} className="ml-3 font-bold text-[#74838b]">停用学生</button>
                       ) : null}
@@ -157,7 +272,7 @@ export function OwnerBilling({
             </table>
           </div>
         )}
-        <p className="border-t border-[#eef1ee] px-5 py-3 text-[11px] leading-6 text-[var(--muted)]">按课时课程：到课或迟到扣这节课所属课程 1 课时。按周期课程：有效期内出勤不扣课时。请假、缺勤和未标记会退回此前实际扣掉的那 1 课时。</p>
+        <p className="border-t border-[#eef1ee] px-5 py-3 text-[11px] leading-6 text-[var(--muted)]">按课时课程：出勤、迟到或缺勤扣这节课所属课程 1 课时。按周期课程不扣课时。请假和未标记会退回此前实际扣掉的那 1 课时。</p>
       </section>
 
       {retiring ? (
@@ -178,69 +293,106 @@ export function OwnerBilling({
       ) : null}
 
       {open ? (
-        <Modal title="记录报名" onClose={() => setOpen(false)}>
+        <Modal title="记录报名" onClose={() => { setOpen(false); setMessage(""); setFailed(false); }}>
           <form onSubmit={submit} className="px-5 py-5">
             <div className="grid gap-3">
-              <label className="grid gap-1.5 text-xs font-bold">
-                学员姓名 <span className="font-medium text-[#9a6729]">必填</span>
-                <select name="studentId" required value={studentId} onChange={(event) => setStudentId(event.target.value)} className={fieldClass}>
-                  <option value="">请选择学员</option>
-                  {[...new Map(students.map((student) => [student.id, student])).values()].map((student) => <option key={student.id} value={student.id}>{student.name}</option>)}
-                </select>
-              </label>
-              <label className="grid gap-1.5 text-xs font-bold">
-                报名课程 <span className="font-medium text-[#9a6729]">必填</span>
-                <select name="courseId" required value={courseId} onChange={(event) => { setCourseId(event.target.value); setClassGroupId(""); }} className={fieldClass}>
-                  <option value="">请选择课程</option>
-                  {courses.map((course) => <option key={course.id} value={course.id}>{course.name}</option>)}
-                </select>
-              </label>
-              {courseId && (courses.find((course) => course.id === courseId)?.classGroups.length ?? 0) > 0 ? (
-                <label className="grid gap-1.5 text-xs font-bold">
-                  报名班级 <span className="font-medium text-[#9a6729]">必填</span>
-                  <select name="classGroupId" required value={classGroupId} onChange={(event) => setClassGroupId(event.target.value)} className={fieldClass}>
-                    <option value="">请选择班级</option>
-                    {courses.find((course) => course.id === courseId)?.classGroups.map((item) => (
-                      <option key={item.id} value={item.id}>{item.name}</option>
-                    ))}
-                  </select>
-                </label>
-              ) : courseId ? <p className="text-xs text-[var(--muted)]">这门课程还没有班级，这次报名先不绑定班级。</p> : null}
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="grid gap-1.5 text-xs font-bold">
-                  应收金额
-                  <input name="amountDue" type="number" min="0" step="0.01" defaultValue="0.00" required className={fieldClass} />
-                </label>
-                <label className="grid gap-1.5 text-xs font-bold">
-                  实收金额
-                  <input name="amount" type="number" min="0" step="0.01" defaultValue="0.00" required className={fieldClass} />
-                </label>
+              <div className="flex rounded-[10px] border border-[var(--line)] bg-white p-1">
+                <button type="button" onClick={() => { setMode("new"); setGuardianName(""); }} className={`flex-1 rounded-lg px-3 py-2 text-xs font-bold ${mode === "new" ? "bg-[var(--teal)] text-white" : "text-[#385058]"}`}>新生报名</button>
+                <button type="button" onClick={() => { setMode("existing"); setGuardianName(directory.find((student) => student.id === studentId)?.guardianName ?? ""); }} className={`flex-1 rounded-lg px-3 py-2 text-xs font-bold ${mode === "existing" ? "bg-[var(--teal)] text-white" : "text-[#385058]"}`}>老生续费/加报</button>
               </div>
-              {courses.find((course) => course.id === courseId)?.billingType === "PER_PERIOD" ? (
+              {mode === "new" ? (
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="grid gap-1.5 text-xs font-bold">
-                    有效期开始 <span className="font-medium text-[#9a6729]">必填</span>
-                    <input name="startDate" type="date" required className={fieldClass} />
+                    学生姓名 <span className="font-medium text-[#9a6729]">必填</span>
+                    <input value={studentName} onChange={(event) => setStudentName(event.target.value)} placeholder="请输入姓名" className={fieldClass} />
                   </label>
                   <label className="grid gap-1.5 text-xs font-bold">
-                    有效期结束 <span className="font-medium text-[#9a6729]">必填</span>
-                    <input name="endDate" type="date" required className={fieldClass} />
+                    年级
+                    <input value={grade} onChange={(event) => setGrade(event.target.value)} placeholder="例如：初二" className={fieldClass} />
+                  </label>
+                  <label className="grid gap-1.5 text-xs font-bold">
+                    年龄
+                    <input value={age} onChange={(event) => setAge(event.target.value)} inputMode="numeric" placeholder="例如：12" className={fieldClass} />
                   </label>
                 </div>
-              ) : courseId ? (
-                <label className="grid gap-1.5 text-xs font-bold">
-                  购买课时 <span className="font-medium text-[#9a6729]">必填</span>
-                  <input name="hoursAdded" type="number" min="1" max="500" step="1" defaultValue="12" required className={fieldClass} />
-                </label>
               ) : (
-                <p className="text-xs text-[var(--muted)]">选择课程后，按课时填写节数，按周期填写有效期。</p>
+                <label className="grid gap-1.5 text-xs font-bold">
+                  学员姓名 <span className="font-medium text-[#9a6729]">必填</span>
+                  <StudentCombobox students={directory} value={studentId} onChange={(id) => { setStudentId(id); setGuardianName(directory.find((student) => student.id === id)?.guardianName ?? ""); }} />
+                </label>
               )}
+              <label className="grid gap-1.5 text-xs font-bold">
+                家长姓名 <span className="font-medium text-[#9a6729]">必填</span>
+                <input value={guardianName} onChange={(event) => setGuardianName(event.target.value)} readOnly={mode === "existing" && Boolean(directory.find((student) => student.id === studentId)?.guardianName)} placeholder="请输入家长姓名" className={fieldClass} />
+                {mode === "existing" && directory.find((student) => student.id === studentId)?.guardianName ? <span className="font-medium text-[var(--muted)]">这位学员已经有家长姓名。要修改，请到学生管理里编辑。</span> : null}
+              </label>
+              {lines.map((line, index) => {
+                const course = courses.find((item) => item.id === line.courseId);
+                const byPeriod = course?.billingType === "PER_PERIOD";
+                return (
+                  <div key={line.key} className="grid gap-3 rounded-xl border border-[var(--line)] bg-[#f7faf8] p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-bold text-[#146b62]">第 {index + 1} 门</span>
+                      {lines.length > 1 ? (
+                        <button type="button" onClick={() => setLines((current) => current.filter((item) => item.key !== line.key))} className="text-xs font-bold text-[#9a6729]">移除</button>
+                      ) : null}
+                    </div>
+                    <label className="grid gap-1.5 text-xs font-bold">
+                      报名课程 <span className="font-medium text-[#9a6729]">必填</span>
+                      <select value={line.courseId} onChange={(event) => updateLine(line.key, { courseId: event.target.value, classGroupId: "" })} className={fieldClass}>
+                        <option value="">请选择课程</option>
+                        {courses.map((item) => <option key={item.id} value={item.id}>{item.name}{item.billingType === "PER_PERIOD" ? " · 按周期" : " · 按课时"}</option>)}
+                      </select>
+                    </label>
+                    {course ? (
+                      <label className="grid gap-1.5 text-xs font-bold">
+                        报名班级 <span className="font-medium text-[#9a6729]">必填</span>
+                        <select value={line.classGroupId} onChange={(event) => updateLine(line.key, { classGroupId: event.target.value })} className={fieldClass}>
+                          <option value="">请选择班级</option>
+                          {course.classGroups.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                        </select>
+                        {course.classGroups.length === 0 ? <span className="font-medium text-[#9a6729]">这门课程还没有班级，请先到课程与班级里创建。</span> : null}
+                      </label>
+                    ) : null}
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="grid gap-1.5 text-xs font-bold">
+                        应收金额
+                        <input value={line.amountDue} onChange={(event) => updateLine(line.key, { amountDue: event.target.value })} type="number" min="0" step="0.01" className={fieldClass} />
+                      </label>
+                      <label className="grid gap-1.5 text-xs font-bold">
+                        实收金额
+                        <input value={line.amount} onChange={(event) => updateLine(line.key, { amount: event.target.value })} type="number" min="0" step="0.01" className={fieldClass} />
+                      </label>
+                    </div>
+                    {byPeriod ? (
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="grid gap-1.5 text-xs font-bold">
+                          有效期开始时间 <span className="font-medium text-[#9a6729]">必填</span>
+                          <DateField value={line.startDate} onChange={(startDate) => updateLine(line.key, { startDate })} required className={fieldClass} />
+                        </label>
+                        <label className="grid gap-1.5 text-xs font-bold">
+                          有效期结束时间 <span className="font-medium text-[#9a6729]">必填</span>
+                          <DateField value={line.endDate} onChange={(endDate) => updateLine(line.key, { endDate })} required className={fieldClass} />
+                        </label>
+                      </div>
+                    ) : course ? (
+                      <label className="grid gap-1.5 text-xs font-bold">
+                        购买课时数 <span className="font-medium text-[#9a6729]">必填</span>
+                        <input value={line.hoursAdded} onChange={(event) => updateLine(line.key, { hoursAdded: event.target.value })} type="number" min="1" max="500" step="1" className={fieldClass} />
+                      </label>
+                    ) : (
+                      <p className="text-xs text-[var(--muted)]">选择课程后，按课时填写节数，按周期填写有效期。</p>
+                    )}
+                  </div>
+                );
+              })}
+              <button type="button" disabled={lines.length >= 12 || courses.length === 0} onClick={() => setLines((current) => [...current, blankLine()])} className="w-fit text-xs font-bold text-[var(--teal)] disabled:opacity-50">＋ 添加一门课程</button>
             </div>
             {courses.length === 0 ? <p className="mt-3 text-xs text-[#9a6729]">还没有在用的课程。请先到课程与班级里创建。</p> : null}
             {message ? <p className="mt-3 text-xs text-[#b94d4d]">{message}</p> : null}
             <div className="mt-5 flex justify-end gap-2">
-              <button type="button" onClick={() => setOpen(false)} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold">取消</button>
-              <button disabled={pending || courses.length === 0 || students.length === 0} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white disabled:opacity-60">{pending ? "正在保存…" : "保存"}</button>
+              <button type="button" onClick={() => { setOpen(false); setMessage(""); setFailed(false); }} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold">取消</button>
+              <button disabled={pending || courses.length === 0} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white disabled:opacity-60">{pending ? "正在保存…" : "保存"}</button>
             </div>
           </form>
         </Modal>

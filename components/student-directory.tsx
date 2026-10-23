@@ -3,25 +3,30 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState, useTransition } from "react";
-import { TextField } from "@/components/form-fields";
+import { FieldError, TextField } from "@/components/form-fields";
 import { ParentInviteButton } from "@/components/invite-button";
 import { Modal } from "@/components/modal";
 import { SortHeader } from "@/components/sort-header";
 import type { SortOrder } from "@/lib/table-sort";
 import { createStudent, importStudents, setStudentStatus, updateStudent, type FieldErrors, type ImportFailure } from "@/app/owner/students/actions";
 import { linkParent, unlinkParent } from "@/app/owner/students/links";
+import { ParentCombobox } from "@/components/parent-combobox";
+import { studyBadge } from "@/lib/student-profile";
 
 export type StudentRow = {
   id: string;
   name: string;
   studentNo: string | null;
   grade: string | null;
+  age: number | null;
+  guardianName: string | null;
   contactNote: string | null;
   status: "ACTIVE" | "INACTIVE";
   archiveReason: string | null;
+  courses: string[];
 };
 
-export type ParentAccount = { id: string; name: string; email: string };
+export type ParentAccount = { id: string; name: string; email: string; phone: string | null };
 export type GuardianLink = { id: string; studentId: string; parentUserId: string; parentName: string; parentEmail: string };
 
 function studentListHref({
@@ -86,7 +91,7 @@ export function StudentDirectory({
   const [importFailures, setImportFailures] = useState<ImportFailure[]>([]);
 
   function downloadTemplate() {
-    const csv = "\uFEFF姓名*,年级/年龄,家长手机号,备注\r\n张三,初二,13800000000,无\r\n";
+    const csv = "\uFEFF姓名*,年级,年龄,家长手机号,备注\r\n张三,初二,13,13800000000,无\r\n";
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a");
     link.href = url;
@@ -177,7 +182,11 @@ export function StudentDirectory({
   }
 
   const guardians = viewing ? links.filter((link) => link.studentId === viewing.id) : [];
-  const availableParents = parents.filter((parent) => !guardians.some((link) => link.parentUserId === parent.id));
+  const childCounts = new Map<string, number>();
+  for (const link of links) childCounts.set(link.parentUserId, (childCounts.get(link.parentUserId) ?? 0) + 1);
+  const availableParents = parents
+    .filter((parent) => !guardians.some((link) => link.parentUserId === parent.id))
+    .map((parent) => ({ ...parent, childCount: childCounts.get(parent.id) ?? 0 }));
 
   return (
     <section>
@@ -222,12 +231,15 @@ export function StudentDirectory({
 
       <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] border-collapse text-left text-xs">
+          <table className="w-full min-w-[1160px] border-collapse text-left text-xs">
             <thead className="bg-[#fafbf9] text-[10px] tracking-wide text-[#84918e]">
               <tr>
                 <SortHeader label="学生" field="name" sortBy={sortBy} order={order} pathname="/owner/students" query={query} extra={statusFilter ? { status: statusFilter } : undefined} />
+                <th className="px-4 py-3 font-extrabold">家长姓名</th>
                 <SortHeader label="编号" field="studentNo" sortBy={sortBy} order={order} pathname="/owner/students" query={query} extra={statusFilter ? { status: statusFilter } : undefined} />
-                <th className="px-4 py-3 font-extrabold">年级 / 年龄</th>
+                <th className="px-4 py-3 font-extrabold">年级</th>
+                <th className="px-4 py-3 font-extrabold">年龄</th>
+                <th className="px-4 py-3 font-extrabold">报名课程</th>
                 <th className="px-4 py-3 font-extrabold">状态</th>
                 <th className="px-4 py-3 font-extrabold">操作</th>
               </tr>
@@ -235,7 +247,7 @@ export function StudentDirectory({
             <tbody>
               {students.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-12 text-center leading-7 text-[var(--muted)]">
+                  <td colSpan={8} className="px-4 py-12 text-center leading-7 text-[var(--muted)]">
                     {query || statusFilter ? "没有找到符合条件的学生。" : "还没有学生。可以先新增一名学生。"}
                   </td>
                 </tr>
@@ -243,11 +255,22 @@ export function StudentDirectory({
                 students.map((student) => (
                   <tr key={student.id} className="border-t border-[#eef1ee]">
                     <td className="px-4 py-4 font-bold">{student.name}</td>
+                    <td className="px-4 py-4">{student.guardianName ?? "—"}</td>
                     <td className="px-4 py-4 text-[var(--muted)]">{student.studentNo ?? "—"}</td>
                     <td className="px-4 py-4">{student.grade ?? "—"}</td>
+                    <td className="px-4 py-4">{student.age ? `${student.age}岁` : "—"}</td>
                     <td className="px-4 py-4">
-                      <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${student.status === "ACTIVE" ? "bg-[#edf5f1] text-[#34725d]" : "bg-[#fff2df] text-[#9a6729]"}`}>
-                        {student.status === "ACTIVE" ? "在读" : "已停用"}
+                      {student.courses.length === 0 ? <span className="text-[var(--muted)]">—</span> : (
+                        <div className="flex flex-wrap gap-1">
+                          {student.courses.map((course) => (
+                            <span key={course} className="rounded-full bg-[#e4f2ee] px-2 py-1 text-[10px] font-bold text-[#146b62]">{course}</span>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-4">
+                      <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${studyBadge(student.status, student.courses.length > 0).className}`}>
+                        {studyBadge(student.status, student.courses.length > 0).label}
                       </span>
                     </td>
                     <td className="px-4 py-4">
@@ -272,7 +295,7 @@ export function StudentDirectory({
         <Modal title="批量导入学生" onClose={() => setImporting(false)}>
           <form onSubmit={uploadStudents} className="grid gap-3 px-5 py-5 text-sm">
             <button type="button" onClick={downloadTemplate} className="w-fit font-bold text-[var(--teal)]">下载导入模板（CSV格式）</button>
-            <p className="leading-6 text-[var(--muted)]">用 Excel 打开模板，从第三行开始填写。姓名必填。年级、家长手机号和备注可以留空。手机号只保存下来，供以后绑定家长，这次不会创建家长账号。编号不用填，系统会自动生成；如果自行增加「编号」列，则只能使用字母、数字和短横线。请另存为 CSV 再上传。</p>
+            <p className="leading-6 text-[var(--muted)]">用 Excel 打开模板，从第三行开始填写。姓名必填。年级、年龄、家长手机号和备注可以留空。年龄只能填数字。手机号只保存下来，供以后绑定家长，这次不会创建家长账号。编号不用填，系统会自动生成；如果自行增加「编号」列，则只能使用字母、数字和短横线。请另存为 CSV 再上传。</p>
             <label className="grid gap-1.5 text-xs font-bold">
               选择文件
               <input name="file" type="file" accept=".csv,text/csv" required className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium" />
@@ -300,9 +323,21 @@ export function StudentDirectory({
             <div className="grid gap-3 sm:grid-cols-2">
               <TextField label="学生姓名" name="name" required defaultValue={editing === "new" ? "" : editing.name} placeholder="请输入姓名" error={fieldErrors.name} />
               <TextField label="学生编号" name="studentNo" defaultValue={editing === "new" ? "" : editing.studentNo} placeholder="留空则自动生成" error={fieldErrors.studentNo} />
-              <TextField label="年级 / 年龄" name="grade" defaultValue={editing === "new" ? "" : editing.grade} placeholder="例如：初二" error={fieldErrors.grade} />
+              <TextField label="家长姓名" name="guardianName" defaultValue={editing === "new" ? "" : editing.guardianName} placeholder="例如：林子涵家长" error={fieldErrors.guardianName} />
+              <TextField label="年级" name="grade" defaultValue={editing === "new" ? "" : editing.grade} placeholder="例如：初二" error={fieldErrors.grade} />
+              <label className="grid gap-1.5 text-xs font-bold">
+                <span>年龄</span>
+                <input name="age" inputMode="numeric" defaultValue={editing === "new" || editing.age == null ? "" : String(editing.age)} placeholder="例如：12" className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]" />
+                <FieldError message={fieldErrors.age} />
+              </label>
               <TextField label="联系备注" name="contactNote" defaultValue={editing === "new" ? "" : editing.contactNote} placeholder="选填，仅机构内部可见" error={fieldErrors.contactNote} />
             </div>
+            {editing !== "new" ? (
+              <div className="mt-4 grid gap-1.5">
+                <span className="text-xs font-bold">家长邀请码</span>
+                <ParentInviteButton studentId={editing.id} />
+              </div>
+            ) : null}
             {message ? <p className="mt-3 text-xs text-[#b94d4d]">{message}</p> : null}
             <div className="mt-5 flex justify-end gap-2">
               <button type="button" onClick={() => setEditing(null)} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold">取消</button>
@@ -316,8 +351,10 @@ export function StudentDirectory({
         <Modal title="学生档案" onClose={() => setViewing(null)}>
           <div className="space-y-4 px-5 py-5 text-sm">
             <div><div className="text-xs font-bold">姓名</div><p className="mt-1">{viewing.name}</p></div>
+            <div><div className="text-xs font-bold">家长姓名</div><p className="mt-1 text-[var(--muted)]">{viewing.guardianName ?? "未填写"}</p></div>
             <div><div className="text-xs font-bold">编号</div><p className="mt-1 text-[var(--muted)]">{viewing.studentNo ?? "—"}</p></div>
-            <div><div className="text-xs font-bold">年级 / 年龄</div><p className="mt-1 text-[var(--muted)]">{viewing.grade ?? "未填写"}</p></div>
+            <div><div className="text-xs font-bold">年级</div><p className="mt-1 text-[var(--muted)]">{viewing.grade ?? "未填写"}</p></div>
+            <div><div className="text-xs font-bold">年龄</div><p className="mt-1 text-[var(--muted)]">{viewing.age ? `${viewing.age}岁` : "未填写"}</p></div>
             <div><div className="text-xs font-bold">联系备注</div><p className="mt-1 leading-6 text-[var(--muted)]">{viewing.contactNote ?? "未填写"}</p></div>
             {viewing.status === "INACTIVE" ? <div><div className="text-xs font-bold">停用原因</div><p className="mt-1 leading-6 text-[var(--muted)]">{viewing.archiveReason?.trim() || "未填写"}</p></div> : null}
             <div>
@@ -339,16 +376,10 @@ export function StudentDirectory({
               )}
               <p className="text-xs leading-5 text-[var(--muted)]">收回后，这位家长不能再查看这名学生。密码不会改变，之后可以重新绑定。</p>
               <form onSubmit={bindGuardian} className="mt-3 grid gap-2">
-                <label className="grid gap-1.5 text-xs font-bold">
+                <div className="grid gap-1.5 text-xs font-bold">
                   绑定家长账号
-                  <select value={parentId} onChange={(event) => setParentId(event.target.value)} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]">
-                    <option value="">请选择本机构家长</option>
-                    {availableParents.map((parent) => (
-                      <option key={parent.id} value={parent.id}>{parent.name} · {parent.email}</option>
-                    ))}
-                  </select>
-                </label>
-                {availableParents.length === 0 ? <p className="text-xs text-[var(--muted)]">没有可绑定的家长账号。</p> : null}
+                  <ParentCombobox key={viewing.id} parents={availableParents} value={parentId} onChange={setParentId} />
+                </div>
                 {linkMessage ? <p className="text-xs text-[#b94d4d]">{linkMessage}</p> : null}
                 <div className="flex flex-wrap items-start gap-2">
                   <button disabled={pending || availableParents.length === 0} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white disabled:opacity-60">

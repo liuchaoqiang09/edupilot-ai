@@ -1,4 +1,5 @@
 import { OwnerBilling, type BillingStudent } from "@/components/owner-billing";
+import type { DirectoryStudent } from "@/components/student-combobox";
 import { canDeactivateEnrollment, lowHourThreshold, periodNeedsRenewal, periodValidity, calendarDateKey } from "@/lib/course-hours";
 import { requireRole } from "@/lib/auth";
 import { dayRange, shanghaiDateKey } from "@/lib/datetime";
@@ -63,6 +64,10 @@ export default async function OwnerBillingPage({
         id: true,
         name: true,
         grade: true,
+        age: true,
+        studentNo: true,
+        contactNote: true,
+        parentLinks: { select: { parent: { select: { phone: true } } } },
         enrollments: {
           orderBy: { createdAt: "desc" },
           select: {
@@ -72,6 +77,7 @@ export default async function OwnerBillingPage({
             startDate: true,
             endDate: true,
             course: { select: { name: true, billingType: true } },
+            classGroup: { select: { name: true } },
           },
         },
         courseHourBalances: { select: { courseId: true, remainingHours: true } },
@@ -96,7 +102,7 @@ export default async function OwnerBillingPage({
     prisma.lessonStudent.count({
       where: {
         organizationId: user.organizationId,
-        attendanceStatus: { in: ["ABSENT", "LEAVE"] },
+        attendanceStatus: "LEAVE",
         hoursCharged: false,
         lessonSession: { startAt: { gte: month.start, lt: month.end }, status: { not: "CANCELLED" } },
       },
@@ -104,6 +110,20 @@ export default async function OwnerBillingPage({
   ]);
   const compare = lastMonth === 0 ? (thisMonth === 0 ? "上月也是 0" : "上月为 0") : `${Math.round(((thisMonth - lastMonth) / lastMonth) * 1000) / 10 > 0 ? "+" : ""}${Math.round(((thisMonth - lastMonth) / lastMonth) * 1000) / 10}% 较上月`;
   const today = shanghaiDateKey();
+  const directory: DirectoryStudent[] = students.map((student) => {
+    const noted = student.contactNote?.match(/1[3-9]\d{9}/g) ?? [];
+    const linked = student.parentLinks.map((link) => link.parent.phone).filter((phone): phone is string => Boolean(phone));
+    return {
+      id: student.id,
+      name: student.name,
+      studentNo: student.studentNo,
+      grade: student.grade,
+      age: student.age,
+      guardianName: student.guardianName,
+      classNames: [...new Set(student.enrollments.flatMap((enrollment) => enrollment.classGroup?.name ? [enrollment.classGroup.name] : []))],
+      phones: [...new Set([...noted, ...linked])],
+    };
+  });
   const rows: BillingStudent[] = [];
   for (const student of students) {
     const byCourse = new Map<string, { name: string; billingType: "PER_LESSON" | "PER_PERIOD"; paidAt: Date | null; windows: { start: string; end: string }[] }>();
@@ -125,6 +145,7 @@ export default async function OwnerBillingPage({
         id: student.id,
         name: student.name,
         grade: student.grade,
+        age: student.age,
         courseName: "还没有报名课程",
         usage: "—",
         usageStatus: "未报名",
@@ -144,6 +165,7 @@ export default async function OwnerBillingPage({
         id: student.id,
         name: student.name,
         grade: student.grade,
+        age: student.age,
         courseName: course.name,
         usage: period ? `有效期至 ${period.end}` : `剩余 ${remainingHours} 节`,
         usageStatus: period ? period.status : lowHours ? "课时不足" : "正常",
@@ -172,6 +194,7 @@ export default async function OwnerBillingPage({
       order={sort?.order ?? null}
       stats={{ enrollments: thisMonth, compare, income: yuan(income._sum.amount), renewing, review }}
       students={tableRows}
+      directory={directory}
     />
   );
 }

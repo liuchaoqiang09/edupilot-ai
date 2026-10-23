@@ -131,7 +131,7 @@ export async function ownerOverview(organizationId: string) {
   };
   const revenueWindow = revenueBounds(time.today);
   const [activeStudents, newStudents, enrollmentsThisMonth, enrollmentsLastMonth, lessons, pendingReports, pendingReportRows, renewingCount, paidRows] = await Promise.all([
-    prisma.student.count({ where: { organizationId, status: "ACTIVE" } }),
+    prisma.student.count({ where: { organizationId, status: "ACTIVE", enrollments: { some: {} } } }),
     prisma.student.count({ where: { organizationId, createdAt: { gte: month.start, lt: month.end } } }),
     prisma.enrollment.findMany({
       where: { organizationId, createdAt: { gte: month.start, lt: month.end } },
@@ -273,7 +273,7 @@ type PublishedBrief = {
 export async function parentSnapshot(organizationId: string, parentUserId: string) {
   const links = await prisma.parentStudentLink.findMany({
     where: { organizationId, parentUserId },
-    include: { student: { select: { id: true, name: true, grade: true, studentNo: true, status: true, archiveReason: true } } },
+    include: { student: { select: { id: true, name: true, grade: true, age: true, studentNo: true, status: true, archiveReason: true, _count: { select: { enrollments: true } } } } },
     orderBy: { createdAt: "desc" },
   });
   const studentIds = links.map((link) => link.student.id);

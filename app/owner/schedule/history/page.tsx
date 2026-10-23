@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DateField } from "@/components/date-field";
 import { requireRole } from "@/lib/auth";
 import { attendanceLabel, lessonStatusLabel } from "@/lib/lesson-labels";
 import { dayRange, formatClock, formatDateLabel, shanghaiDateKey, shiftDate } from "@/lib/datetime";
@@ -85,8 +86,8 @@ export default async function ScheduleHistoryPage({
       {clamped ? <p className="mt-4 rounded-xl bg-[#fff2df] px-4 py-3 text-xs leading-6 text-[#9a6729]">查询范围已限制在最近一年到今天。更早的课次不在这个页面。</p> : null}
 
       <form action="/owner/schedule/history" className="mt-6 grid gap-3 rounded-2xl border border-[var(--line)] bg-white p-4 sm:grid-cols-2 lg:grid-cols-5">
-        <label className="grid gap-1.5 text-xs font-bold">开始日期<input type="date" name="from" defaultValue={from} className="rounded-[10px] border border-[var(--line)] px-3 py-2 text-sm font-medium" /></label>
-        <label className="grid gap-1.5 text-xs font-bold">结束日期<input type="date" name="to" defaultValue={to} className="rounded-[10px] border border-[var(--line)] px-3 py-2 text-sm font-medium" /></label>
+        <label className="grid gap-1.5 text-xs font-bold">开始日期<DateField name="from" defaultValue={from} className="rounded-[10px] border border-[var(--line)] px-3 py-2 text-sm font-medium" /></label>
+        <label className="grid gap-1.5 text-xs font-bold">结束日期<DateField name="to" defaultValue={to} className="rounded-[10px] border border-[var(--line)] px-3 py-2 text-sm font-medium" /></label>
         <label className="grid gap-1.5 text-xs font-bold">教师
           <select name="teacherId" defaultValue={teacherId} className="rounded-[10px] border border-[var(--line)] px-3 py-2 text-sm font-medium">
             <option value="">全部教师</option>

@@ -1,6 +1,7 @@
 import { AccountSecurity } from "@/components/account-security";
 import { requireRole } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { studentFacts, studyBadge } from "@/lib/student-profile";
 
 export const dynamic = "force-dynamic";
 
@@ -8,7 +9,7 @@ export default async function ParentAccountPage() {
   const user = await requireRole("PARENT", "parent");
   const links = await prisma.parentStudentLink.findMany({
     where: { organizationId: user.organizationId, parentUserId: user.id },
-    include: { student: { select: { name: true, studentNo: true, grade: true, status: true } } },
+    include: { student: { select: { name: true, studentNo: true, grade: true, age: true, status: true, _count: { select: { enrollments: true } } } } },
     orderBy: { createdAt: "asc" },
   });
 
@@ -28,7 +29,10 @@ export default async function ParentAccountPage() {
             {links.map((link) => (
               <li key={link.id} className="border-t border-[#eef1ee] px-4 py-4 first:border-t-0">
                 <div className="text-sm font-bold">{link.student.name}</div>
-                <div className="mt-1 text-xs text-[var(--muted)]">{link.student.grade ?? "未填写年级"} · {link.student.studentNo ?? "无编号"}</div>
+                <div className="mt-1 text-xs text-[var(--muted)]">{studentFacts(link.student.grade, link.student.age)} · {link.student.studentNo ?? "无编号"}</div>
+                <span className={`mt-2 inline-block rounded-full px-2 py-1 text-[10px] font-bold ${studyBadge(link.student.status, link.student._count.enrollments > 0).className}`}>
+                  {studyBadge(link.student.status, link.student._count.enrollments > 0).label}
+                </span>
               </li>
             ))}
           </ul>

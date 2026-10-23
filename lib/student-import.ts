@@ -1,10 +1,10 @@
 export type CsvRow = { line: number; cells: string[] };
 
-const aliases: Record<string, "name" | "grade" | "phone" | "note" | "studentNo"> = {
+const aliases: Record<string, "name" | "grade" | "age" | "phone" | "note" | "studentNo"> = {
   姓名: "name",
   "年级/年龄": "grade",
   年级: "grade",
-  年龄: "grade",
+  年龄: "age",
   家长手机号: "phone",
   手机号: "phone",
   备注: "note",
@@ -87,7 +87,7 @@ export function parseCsv(text: string): CsvRow[] {
 }
 
 export function headerMap(cells: string[]) {
-  const map = new Map<"name" | "grade" | "phone" | "note" | "studentNo", number>();
+  const map = new Map<"name" | "grade" | "age" | "phone" | "note" | "studentNo", number>();
   cells.forEach((cell, index) => {
     const key = aliases[cell.replace(/\*/g, "").trim()];
     if (key && !map.has(key)) map.set(key, index);

@@ -48,6 +48,7 @@ export default async function OwnerSchedulePage({
               select: {
                 name: true,
                 grade: true,
+                age: true,
                 parentLinks: { select: { parent: { select: { name: true, phone: true, email: true } } } },
               },
             },
@@ -97,6 +98,7 @@ export default async function OwnerSchedulePage({
         id: row.studentId,
         name: row.student.name,
         grade: row.student.grade,
+        age: row.student.age,
         parentContact: row.student.parentLinks.length === 0
           ? "未绑定家长"
           : row.student.parentLinks.map((link) => `${link.parent.name} ${link.parent.phone || link.parent.email}`).join("、"),

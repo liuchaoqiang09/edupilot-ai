@@ -3,6 +3,7 @@ import { requireRole } from "@/lib/auth";
 import { parentSnapshot } from "@/lib/dashboard";
 import { formatClock, formatDateTime } from "@/lib/datetime";
 import { attendanceLabel } from "@/lib/lesson-labels";
+import { studentFacts, studyBadge } from "@/lib/student-profile";
 
 export default async function ParentHomePage() {
   const user = await requireRole("PARENT", "parent");
@@ -23,11 +24,11 @@ export default async function ParentHomePage() {
               <li key={link.id} className="flex flex-wrap items-center justify-between gap-3 border-t border-[#eef1ee] px-4 py-4 first:border-t-0">
                 <div>
                   <div className="text-sm font-bold">{link.student.name}</div>
-                  <div className="mt-1 text-xs text-[var(--muted)]">{link.student.grade ?? "未填写年级"} · {link.student.studentNo ?? "无编号"}</div>
+                  <div className="mt-1 text-xs text-[var(--muted)]">{studentFacts(link.student.grade, link.student.age)} · {link.student.studentNo ?? "无编号"}</div>
                 </div>
                 <div className="text-right">
-                  <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${link.student.status === "ACTIVE" ? "bg-[#edf5f1] text-[#34725d]" : "bg-[#eef1ee] text-[#74838b]"}`}>
-                    {link.student.status === "ACTIVE" ? "在读" : "已停用"}
+                  <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${studyBadge(link.student.status, link.student._count.enrollments > 0).className}`}>
+                    {studyBadge(link.student.status, link.student._count.enrollments > 0).label}
                   </span>
                   {link.student.status === "INACTIVE" ? <div className="mt-1 text-xs text-[#74838b]">停用原因：{link.student.archiveReason?.trim() || "未填写"}</div> : null}
                 </div>

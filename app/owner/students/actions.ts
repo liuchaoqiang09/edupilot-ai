@@ -8,8 +8,9 @@ import { calendarDateKey, canDeactivateEnrollment, periodValidity } from "@/lib/
 import { shanghaiDateKey } from "@/lib/datetime";
 import { cellAt, decodeCsvBytes, headerMap, parseCsv } from "@/lib/student-import";
 import { prisma } from "@/lib/prisma";
+import { parseAge } from "@/lib/student-profile";
 
-export type FieldErrors = Partial<Record<"name" | "studentNo" | "grade" | "contactNote", string>>;
+export type FieldErrors = Partial<Record<"name" | "studentNo" | "grade" | "age" | "guardianName" | "contactNote", string>>;
 
 export type ActionResult = {
   ok: boolean;
@@ -35,6 +36,8 @@ function validateStudent(formData: FormData) {
   const name = clean(formData.get("name"));
   const studentNo = clean(formData.get("studentNo"));
   const grade = clean(formData.get("grade"));
+  const parsedAge = parseAge(formData.get("age"));
+  const guardianName = clean(formData.get("guardianName"));
   const contactNote = clean(formData.get("contactNote"));
 
   if (!name) fieldErrors.name = "请填写学生姓名。";
@@ -42,7 +45,9 @@ function validateStudent(formData: FormData) {
   if (studentNo && !/^[A-Za-z0-9-]{1,32}$/.test(studentNo)) {
     fieldErrors.studentNo = "编号只能包含字母、数字和短横线，最多 32 位。";
   }
-  if (grade.length > 40) fieldErrors.grade = "年级或年龄不能超过 40 个字。";
+  if (grade.length > 40) fieldErrors.grade = "年级不能超过 40 个字。";
+  if (parsedAge.error) fieldErrors.age = parsedAge.error;
+  if (guardianName.length > 40) fieldErrors.guardianName = "家长姓名不能超过 40 个字。";
   if (contactNote.length > 200) fieldErrors.contactNote = "联系备注不能超过 200 个字。";
 
   return {
@@ -51,6 +56,8 @@ function validateStudent(formData: FormData) {
       name,
       studentNo: studentNo || null,
       grade: grade || null,
+      age: parsedAge.age,
+      guardianName: guardianName || null,
       contactNote: contactNote || null,
     },
   };
@@ -85,6 +92,8 @@ export async function createStudent(formData: FormData): Promise<ActionResult> {
         name: data.name,
         studentNo: data.studentNo ?? (await nextStudentNo(user.organizationId)),
         grade: data.grade,
+        age: data.age,
+        guardianName: data.guardianName,
         contactNote: data.contactNote,
       },
     });
@@ -117,15 +126,16 @@ export async function importStudents(formData: FormData): Promise<ImportResult> 
   if (!columns.has("name")) return { ok: false, created: 0, failed: [], message: "表头需要包含「姓名」。请使用下载的模板。" };
 
   const failed: ImportFailure[] = [];
-  const ready: { row: number; name: string; grade: string | null; contactNote: string | null; studentNo: string | null }[] = [];
+  const ready: { row: number; name: string; grade: string | null; age: number | null; contactNote: string | null; studentNo: string | null }[] = [];
   const seenNos = new Set<string>();
   for (const record of table.slice(1, 501)) {
     const name = cellAt(record.cells, columns, "name");
     const grade = cellAt(record.cells, columns, "grade");
+    const ageText = cellAt(record.cells, columns, "age");
     const phone = cellAt(record.cells, columns, "phone");
     const note = cellAt(record.cells, columns, "note");
     const studentNo = cellAt(record.cells, columns, "studentNo");
-    if (!name && !grade && !phone && !note && !studentNo) continue;
+    if (!name && !grade && !ageText && !phone && !note && !studentNo) continue;
     if (!name) {
       failed.push({ row: record.line, reason: "姓名为空" });
       continue;
@@ -135,7 +145,12 @@ export async function importStudents(formData: FormData): Promise<ImportResult> 
       continue;
     }
     if (grade.length > 40) {
-      failed.push({ row: record.line, reason: "年级或年龄不能超过 40 个字" });
+      failed.push({ row: record.line, reason: "年级不能超过 40 个字" });
+      continue;
+    }
+    const parsedAge = parseAge(ageText);
+    if (parsedAge.error) {
+      failed.push({ row: record.line, reason: parsedAge.error });
       continue;
     }
     if (phone && !/^1[3-9]\d{9}$/.test(phone)) {
@@ -160,6 +175,7 @@ export async function importStudents(formData: FormData): Promise<ImportResult> 
       row: record.line,
       name,
       grade: grade || null,
+      age: parsedAge.age,
       contactNote: contactNote || null,
       studentNo: studentNo || null,
     });
@@ -197,6 +213,7 @@ export async function importStudents(formData: FormData): Promise<ImportResult> 
           name: row.name,
           studentNo,
           grade: row.grade,
+          age: row.age,
           contactNote: row.contactNote,
         },
       });

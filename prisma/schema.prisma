@@ -146,6 +146,10 @@ model Student {
   name           String
   studentNo      String?
   grade          String?
+  /// 年龄，只存整数。空表示未填写。
+  age            Int?
+  /// 家长姓名。空表示报名和学生档案都还没填写。
+  guardianName   String?
   contactNote    String?
   status         MemberStatus       @default(ACTIVE)
   /// 停用时填写的原因。恢复在读后清空。
