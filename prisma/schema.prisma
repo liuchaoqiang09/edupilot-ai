@@ -57,6 +57,33 @@ enum AttendanceStatus {
   @@schema("edupilot")
 }
 
+/// 请假细分。仅当 attendanceStatus=LEAVE 时有意义；家长请假默认 PERSONAL。
+enum LeaveKind {
+  PERSONAL
+  SICK
+
+  @@schema("edupilot")
+}
+
+enum LessonSeat {
+  ENROLLED
+  GUEST
+  TRIAL
+  CONVERTED
+
+  @@schema("edupilot")
+}
+
+enum RenewalOutcome {
+  TO_CONTACT
+  CONTACTED
+  NEXT_BOOKED
+  DECLINED
+  RENEWED
+
+  @@schema("edupilot")
+}
+
 enum ReportStatus {
   DRAFT
   CONFIRMED
@@ -77,6 +104,16 @@ enum EnrollmentStatus {
 enum BillingType {
   PER_LESSON
   PER_PERIOD
+
+  @@schema("edupilot")
+}
+
+enum PaymentMethod {
+  CASH
+  WECHAT
+  ALIPAY
+  BANK
+  OTHER
 
   @@schema("edupilot")
 }
@@ -107,7 +144,17 @@ model Organization {
   enrollments        Enrollment[]
   auditLogs          AuditLog[]
   courseHourBalances CourseHourBalance[]
+  hourAdjustments    HourAdjustment[]
+  payments           Payment[]
+  renewalFollowUps   RenewalFollowUp[]
   membershipInvites  MembershipInvite[]
+  classrooms         Classroom[]
+  classWaitlists     ClassWaitlist[]
+  reportReads        ReportRead[]
+  reportPhotos       ReportPhoto[]
+  lessonChangeRequests LessonChangeRequest[]
+  reportReplies      ReportReply[]
+  parentNotices      ParentNotice[]
 
   @@schema("edupilot")
 }
@@ -132,7 +179,15 @@ model User {
   publishedReports   TeachingReport[] @relation("ReportPublishedBy")
   createdEnrollments Enrollment[]
   auditLogs          AuditLog[]
+  hourAdjustments    HourAdjustment[]
+  payments           Payment[]
+  renewalFollowUps   RenewalFollowUp[]
   membershipInvites  MembershipInvite[]
+  reportReads        ReportRead[]
+  lessonRequests     LessonChangeRequest[] @relation("LessonRequestBy")
+  reviewedLessonRequests LessonChangeRequest[] @relation("LessonRequestReview")
+  reportReplies      ReportReply[]
+  parentNotices      ParentNotice[]
 
   @@index([organizationId])
   @@schema("edupilot")
@@ -150,6 +205,8 @@ model Student {
   age            Int?
   /// 家长姓名。空表示报名和学生档案都还没填写。
   guardianName   String?
+  /// 报名时填写的联系人电话。空表示还没有从报名同步过来。
+  guardianPhone  String?
   contactNote    String?
   status         MemberStatus       @default(ACTIVE)
   /// 停用时填写的原因。恢复在读后清空。
@@ -163,7 +220,10 @@ model Student {
   teachingReports TeachingReport[]
   enrollments    Enrollment[]
   courseHourBalances CourseHourBalance[]
+  hourAdjustments HourAdjustment[]
+  renewalFollowUps RenewalFollowUp[]
   membershipInvites MembershipInvite[]
+  classWaitlists ClassWaitlist[]
 
   @@unique([organizationId, studentNo])
   @@index([organizationId])
@@ -181,6 +241,8 @@ model Teacher {
   accountUserId  String?      @unique
   accountUser    User?        @relation("TeacherAccount", fields: [accountUserId], references: [id], onDelete: SetNull)
   name           String
+  /// 机构内的教师编号。空表示还没填写，新增时不强制。
+  teacherNo      String?
   /// 11 位手机号。空表示未填写。
   phone          String?
   /// 微信号，只含字母、数字和下划线。
@@ -193,7 +255,9 @@ model Teacher {
   teachingRecords TeachingRecord[]
   membershipInvites MembershipInvite[]
   courses        TeacherCourse[]
+  substituteRequests LessonChangeRequest[] @relation("SubstituteTeacher")
 
+  @@unique([organizationId, teacherNo])
   @@index([organizationId])
   @@schema("edupilot")
 }
@@ -215,6 +279,8 @@ model Course {
   enrollments    Enrollment[]
   lessonSessions LessonSession[]
   courseHourBalances CourseHourBalance[]
+  hourAdjustments HourAdjustment[]
+  renewalFollowUps RenewalFollowUp[]
 
   @@index([organizationId])
   @@schema("edupilot")
@@ -249,6 +315,7 @@ model ClassGroup {
 
   lessonSessions LessonSession[]
   enrollments    Enrollment[]
+  waitlist       ClassWaitlist[]
 
   @@index([organizationId])
   @@index([courseId])
@@ -271,6 +338,9 @@ model LessonSession {
   startAt        DateTime
   endAt          DateTime
   location       String?
+  /// 从教室表选择的教室。旧课次只有地点文字，这个字段留空。
+  classroomId    String?
+  classroom      Classroom?    @relation(fields: [classroomId], references: [id], onDelete: SetNull)
   status         LessonStatus  @default(SCHEDULED)
   createdById    String
   createdBy      User          @relation(fields: [createdById], references: [id])
@@ -278,11 +348,46 @@ model LessonSession {
   updatedAt      DateTime      @updatedAt
   students       LessonStudent[]
   teachingRecord TeachingRecord?
+  changeRequests LessonChangeRequest[]
   reports        TeachingReport[]
 
   @@index([organizationId, startAt])
   @@index([teacherId, startAt])
   @@index([classGroupId])
+  @@index([classroomId])
+  @@schema("edupilot")
+}
+
+/// 机构教室。新排课从这里选择；停用后不再出现在下拉框，已排课次仍保留。
+model Classroom {
+  id             String          @id @default(cuid())
+  organizationId String
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  name           String
+  capacity       Int
+  available      Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  lessons        LessonSession[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@schema("edupilot")
+}
+
+/// 班级排队。排队学生还不是这个班的在读学员，也不会进入课表。
+model ClassWaitlist {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  studentId      String
+  student        Student      @relation(fields: [studentId], references: [id])
+  classGroupId   String
+  classGroup     ClassGroup   @relation(fields: [classGroupId], references: [id])
+  createdAt      DateTime     @default(now())
+
+  @@unique([studentId, classGroupId])
+  @@index([organizationId, classGroupId])
   @@schema("edupilot")
 }
 
@@ -297,7 +402,16 @@ model LessonStudent {
   student          Student          @relation(fields: [studentId], references: [id])
   attendanceStatus AttendanceStatus @default(NOT_MARKED)
   attendanceNote   String?
+  /// 事假 / 病假。仅请假时填写；非请假为 null。旧请假数据迁移为 PERSONAL。
+  leaveKind        LeaveKind?
+  /// 家长在开课前请假的时间。老师把考勤改成其他状态后会清掉。
+  parentLeaveAt    DateTime?
+  parentLeaveNote  String?
   hoursCharged     Boolean          @default(false)
+  seat             LessonSeat       @default(ENROLLED)
+  makeupSourceId   String?
+  makeupSource     LessonStudent?   @relation("LessonMakeup", fields: [makeupSourceId], references: [id], onDelete: SetNull)
+  makeups          LessonStudent[]  @relation("LessonMakeup")
   lastAction       String?
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
@@ -340,6 +454,8 @@ model Enrollment {
   classGroup     ClassGroup?      @relation(fields: [classGroupId], references: [id], onDelete: SetNull)
   amountDue      Decimal          @db.Decimal(10, 2)
   amount         Decimal          @db.Decimal(10, 2)
+  /// 折扣率百分数，80 表示按应收的 80% 计算实际收费。空表示没有填写折扣。
+  discountPercent Decimal?        @db.Decimal(5, 2)
   hoursAdded     Int
   status         EnrollmentStatus
   /// 按周期报名的有效期。按课时报名时留空。
@@ -350,6 +466,7 @@ model Enrollment {
   createdBy      User             @relation(fields: [createdById], references: [id])
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
+  payments       Payment[]
 
   @@index([organizationId, createdAt])
   @@index([studentId])
@@ -428,10 +545,196 @@ model TeachingReport {
   revision         Int           @default(0)
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
+  reads            ReportRead[]
+  photos           ReportPhoto[]
+  replies          ReportReply[]
 
   @@unique([lessonSessionId, studentId])
   @@index([organizationId, status])
   @@index([studentId])
+  @@schema("edupilot")
+}
+
+enum LessonRequestKind {
+  RESCHEDULE
+  SUBSTITUTE
+
+  @@schema("edupilot")
+}
+
+enum LessonRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+
+  @@schema("edupilot")
+}
+
+/// 教师提出的调课或代课。负责人同意前，课次时间和对授课教师都不变。
+model LessonChangeRequest {
+  id                  String              @id @default(cuid())
+  organizationId      String
+  organization        Organization        @relation(fields: [organizationId], references: [id])
+  lessonSessionId     String
+  lessonSession       LessonSession       @relation(fields: [lessonSessionId], references: [id])
+  kind                LessonRequestKind
+  status              LessonRequestStatus @default(PENDING)
+  startAt             DateTime?
+  endAt               DateTime?
+  substituteTeacherId String?
+  substituteTeacher   Teacher?            @relation("SubstituteTeacher", fields: [substituteTeacherId], references: [id])
+  note                String              @default("")
+  requestedById       String
+  requestedBy         User                @relation("LessonRequestBy", fields: [requestedById], references: [id])
+  reviewedById        String?
+  reviewedBy          User?               @relation("LessonRequestReview", fields: [reviewedById], references: [id])
+  reviewNote          String?
+  createdAt           DateTime            @default(now())
+  reviewedAt          DateTime?
+
+  @@index([organizationId, status])
+  @@index([lessonSessionId])
+  @@schema("edupilot")
+}
+
+/// 家长对一份已发布报告的回复。一份报告每位家长只保留一条，可以改。
+model ReportReply {
+  id             String         @id @default(cuid())
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  reportId       String
+  report         TeachingReport @relation(fields: [reportId], references: [id])
+  parentUserId   String
+  parent         User           @relation(fields: [parentUserId], references: [id])
+  body           String
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@unique([reportId, parentUserId])
+  @@index([organizationId])
+  @@schema("edupilot")
+}
+
+enum ParentNoticeKind {
+  LESSON
+  HOMEWORK
+  REPORT
+  MAKEUP
+
+  @@schema("edupilot")
+}
+
+/// 发给已绑定家长的站内提醒。同一家长、同一事件只保留一条。
+model ParentNotice {
+  id             String           @id @default(cuid())
+  organizationId String
+  organization   Organization     @relation(fields: [organizationId], references: [id])
+  parentUserId   String
+  parent         User             @relation(fields: [parentUserId], references: [id])
+  kind           ParentNoticeKind
+  title          String
+  body           String
+  href           String
+  dedupeKey      String
+  readAt         DateTime?
+  createdAt      DateTime         @default(now())
+
+  @@unique([parentUserId, dedupeKey])
+  @@index([organizationId, parentUserId, readAt])
+  @@schema("edupilot")
+}
+
+/// 报告上的课堂照片。发布前只有本机构教师和负责人能看，发布后绑定的家长也能看。
+model ReportPhoto {
+  id             String         @id @default(cuid())
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  reportId       String
+  report         TeachingReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  contentType    String
+  createdAt      DateTime       @default(now())
+
+  @@index([organizationId])
+  @@index([reportId])
+  @@schema("edupilot")
+}
+
+/// 家长第一次打开已发布报告的时间。同一家长对同一报告只记一次。
+model ReportRead {
+  id             String         @id @default(cuid())
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  reportId       String
+  report         TeachingReport @relation(fields: [reportId], references: [id])
+  parentUserId   String
+  parent         User           @relation(fields: [parentUserId], references: [id])
+  openedAt       DateTime       @default(now())
+
+  @@unique([reportId, parentUserId])
+  @@index([organizationId])
+  @@schema("edupilot")
+}
+
+/// 一次课时增减。余额在同一事务里更新，减完不能小于 0。按周期课程不写这张表。
+model HourAdjustment {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  studentId      String
+  student        Student      @relation(fields: [studentId], references: [id])
+  courseId       String
+  course         Course       @relation(fields: [courseId], references: [id])
+  deltaHours     Int
+  reason         String
+  createdById    String
+  createdBy      User         @relation(fields: [createdById], references: [id])
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([studentId])
+  @@schema("edupilot")
+}
+
+/// 一笔收款或退费。退费金额为负数。作废后保留记录，不计入实收。
+model Payment {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  enrollmentId   String
+  enrollment     Enrollment    @relation(fields: [enrollmentId], references: [id])
+  amount         Decimal       @db.Decimal(10, 2)
+  method         PaymentMethod
+  paidAt         DateTime
+  reason         String?
+  voidedAt       DateTime?
+  voidReason     String?
+  createdById    String
+  createdBy      User          @relation(fields: [createdById], references: [id])
+  createdAt      DateTime      @default(now())
+
+  @@index([organizationId, paidAt])
+  @@index([enrollmentId])
+  @@schema("edupilot")
+}
+
+/// 待续费跟进。新的报名会再写一条「已续费」，不覆盖以前的记录。
+model RenewalFollowUp {
+  id             String          @id @default(cuid())
+  organizationId String
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  studentId      String
+  student        Student         @relation(fields: [studentId], references: [id])
+  courseId       String
+  course         Course          @relation(fields: [courseId], references: [id])
+  outcome        RenewalOutcome
+  note           String?
+  nextContactOn  DateTime?       @db.Date
+  createdById    String
+  createdBy      User            @relation(fields: [createdById], references: [id])
+  createdAt      DateTime        @default(now())
+
+  @@index([organizationId, studentId, courseId, createdAt])
   @@schema("edupilot")
 }
 

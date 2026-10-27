@@ -2,14 +2,16 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState, useTransition } from "react";
+import { FormEvent, useEffect, useState, useTransition } from "react";
 import { FieldError, TextField } from "@/components/form-fields";
+import { InstantSearch } from "@/components/instant-search";
 import { TeacherInviteButton } from "@/components/invite-button";
 import { Modal } from "@/components/modal";
 import { SortHeader } from "@/components/sort-header";
 import type { SortOrder } from "@/lib/table-sort";
 import { createTeacher, linkTeacherAccount, revokeTeacherLogin, setTeacherStatus, updateTeacher, type FieldErrors } from "@/app/owner/teachers/actions";
 import { validateTeacherFields } from "@/lib/teacher-fields";
+import { usePick } from "@/components/locale-provider";
 
 export type CourseOption = {
   id: string;
@@ -20,6 +22,7 @@ export type CourseOption = {
 export type TeacherRow = {
   id: string;
   name: string;
+  teacherNo: string | null;
   phone: string | null;
   wechat: string | null;
   courseIds: string[];
@@ -27,6 +30,7 @@ export type TeacherRow = {
   status: "ACTIVE" | "INACTIVE";
   linked: boolean;
   accountEmail: string | null;
+  upcomingLessonCount: number;
 };
 
 function CourseChecks({ courses, selected, error }: { courses: CourseOption[]; selected: string[]; error?: string }) {
@@ -132,18 +136,34 @@ export function TeacherDirectory({
   statusFilter = null,
   sortBy,
   order,
+  openFormKey = "",
+  focusId = "",
 }: {
   teachers: TeacherRow[];
   courses: CourseOption[];
   query: string;
-  statusFilter?: "在职" | null;
-  sortBy: "name" | "phone" | null;
+  statusFilter?: "在职" | "已停用" | null;
+  sortBy: "name" | "phone" | "teacherNo" | null;
   order: SortOrder | null;
+  openFormKey?: string;
+  focusId?: string;
 }) {
   const router = useRouter();
+  const t = usePick();
   const [pending, startTransition] = useTransition();
   const [editing, setEditing] = useState<TeacherRow | "new" | null>(null);
+  useEffect(() => {
+    if (!openFormKey) return;
+    setEditing("new");
+    setFieldErrors({});
+    setMessage("");
+  }, [openFormKey]);
   const [viewing, setViewing] = useState<TeacherRow | null>(null);
+  useEffect(() => {
+    if (!focusId) return;
+    const teacher = teachers.find((item) => item.id === focusId);
+    if (teacher) setViewing(teacher);
+  }, [focusId, teachers]);
   const [confirming, setConfirming] = useState<TeacherRow | null>(null);
   const [revoking, setRevoking] = useState<TeacherRow | null>(null);
   const [message, setMessage] = useState("");
@@ -154,6 +174,7 @@ export function TeacherDirectory({
     const formData = new FormData(event.currentTarget);
     const checked = validateTeacherFields({
       name: String(formData.get("name") ?? ""),
+      teacherNo: String(formData.get("teacherNo") ?? ""),
       phone: String(formData.get("phone") ?? ""),
       wechat: String(formData.get("wechat") ?? ""),
     });
@@ -206,8 +227,8 @@ export function TeacherDirectory({
     <section>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-[28px] font-semibold tracking-tight">教师管理</h1>
-          <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">新老师默认暂不关联。把邀请码发给老师后，对方注册成功会自动关联。密码只有老师自己知道，负责人不能查看。</p>
+          <h1 className="text-[28px] font-semibold tracking-tight">{t("教师管理", "Teachers")}</h1>
+          <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">{t("新老师默认暂不关联。把邀请码发给老师后，对方注册成功会自动关联。密码只有老师自己知道，负责人不能查看。", "A new teacher is not linked yet. After they register with an invite code, the account links itself. Only the teacher knows the password.")}</p>
           {statusFilter ? (
             <p className="mt-3 flex flex-wrap items-center gap-2 text-xs">
               <span className="rounded-full bg-[var(--teal-2)] px-2.5 py-1 font-bold text-[var(--teal)]">当前正在筛选：在职</span>
@@ -223,26 +244,23 @@ export function TeacherDirectory({
         </div>
       </div>
 
-      <form action="/owner/teachers" className="mt-6 flex flex-wrap gap-2">
-        {statusFilter ? <input type="hidden" name="status" value={statusFilter} /> : null}
-        {sortBy && order ? (
-          <>
-            <input type="hidden" name="sortBy" value={sortBy} />
-            <input type="hidden" name="order" value={order} />
-          </>
-        ) : null}
-        <input name="q" defaultValue={query} placeholder="搜索教师姓名" className="w-full rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm outline-none focus:border-[var(--teal)] sm:w-auto sm:min-w-[220px] sm:flex-1" />
-        <button className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold text-[#385058]">搜索</button>
-        {query ? <Link href={sortBy && order ? `/owner/teachers?${statusFilter ? `status=${statusFilter}&` : ""}sortBy=${sortBy}&order=${order}` : statusFilter ? `/owner/teachers?status=${statusFilter}` : "/owner/teachers"} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold text-[#385058]">重置</Link> : null}
-      </form>
+      <InstantSearch
+        action="/owner/teachers"
+        query={query}
+        placeholder="搜索教师姓名或编号"
+        params={{ status: statusFilter, sortBy, order }}
+        className="mt-6 flex flex-wrap gap-2"
+        inputClassName="w-full rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm outline-none focus:border-[var(--teal)] sm:w-auto sm:min-w-[220px] sm:flex-1"
+      />
       {message ? <p className="mt-3 text-sm text-[#b94d4d]">{message}</p> : null}
 
       <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[920px] border-collapse text-left text-xs">
+          <table className="w-full min-w-[1040px] border-collapse text-left text-xs">
             <thead className="bg-[#fafbf9] text-[10px] tracking-wide text-[#84918e]">
               <tr>
                 <SortHeader label="教师" field="name" sortBy={sortBy} order={order} pathname="/owner/teachers" query={query} extra={statusFilter ? { status: statusFilter } : undefined} />
+                <SortHeader label="编号" field="teacherNo" sortBy={sortBy} order={order} pathname="/owner/teachers" query={query} extra={statusFilter ? { status: statusFilter } : undefined} />
                 <SortHeader label="联系方式" field="phone" sortBy={sortBy} order={order} pathname="/owner/teachers" query={query} extra={statusFilter ? { status: statusFilter } : undefined} />
                 <th className="px-4 py-3 font-extrabold">教授课程</th>
                 <th className="px-4 py-3 font-extrabold">登录账号</th>
@@ -253,7 +271,7 @@ export function TeacherDirectory({
             <tbody>
               {teachers.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-12 text-center leading-7 text-[var(--muted)]">
+                  <td colSpan={7} className="px-4 py-12 text-center leading-7 text-[var(--muted)]">
                     {query || statusFilter ? "没有找到符合条件的教师。" : "还没有教师。可以先新增一位教师。"}
                   </td>
                 </tr>
@@ -261,6 +279,7 @@ export function TeacherDirectory({
                 teachers.map((teacher) => (
                   <tr key={teacher.id} className="border-t border-[#eef1ee]">
                     <td className="px-4 py-4 font-bold">{teacher.name}</td>
+                    <td className="px-4 py-4 text-[var(--muted)]">{teacher.teacherNo ?? "—"}</td>
                     <td className="px-4 py-4 text-[var(--muted)]">{teacher.phone || "—"}</td>
                     <td className="px-4 py-4">
                       {teacher.courseNames.length === 0 ? (
@@ -305,6 +324,7 @@ export function TeacherDirectory({
           <form key={editing === "new" ? "new" : editing.id} onSubmit={save} className="px-5 py-5">
             <div className="grid gap-3">
               <TextField label="教师姓名" name="name" required defaultValue={editing === "new" ? "" : editing.name} placeholder="例如 王强" error={fieldErrors.name} />
+              <TextField label="教师编号" name="teacherNo" defaultValue={editing === "new" ? "" : editing.teacherNo ?? ""} placeholder="选填，例如 T001" error={fieldErrors.teacherNo} />
               <DigitField label="手机号" name="phone" defaultValue={editing === "new" ? "" : editing.phone ?? ""} placeholder="请输入 11 位手机号" error={fieldErrors.phone} />
               <WechatField defaultValue={editing === "new" ? "" : editing.wechat ?? ""} error={fieldErrors.wechat} />
               <CourseChecks courses={courses} selected={editing === "new" ? [] : editing.courseIds} error={fieldErrors.courses} />
@@ -346,6 +366,7 @@ export function TeacherDirectory({
         <Modal title="教师档案" onClose={() => setViewing(null)}>
           <div className="space-y-4 px-5 py-5 text-sm">
             <div><div className="text-xs font-bold">姓名</div><p className="mt-1">{viewing.name}</p></div>
+            <div><div className="text-xs font-bold">编号</div><p className="mt-1 text-[var(--muted)]">{viewing.teacherNo ?? "未填写"}</p></div>
             <div><div className="text-xs font-bold">手机号</div><p className="mt-1 text-[var(--muted)]">{viewing.phone || "未填写"}</p></div>
             <div><div className="text-xs font-bold">微信号</div><p className="mt-1 text-[var(--muted)]">{viewing.wechat || "未填写"}</p></div>
             <div>
@@ -378,13 +399,25 @@ export function TeacherDirectory({
       {confirming ? (
         <Modal title="停用教师" onClose={() => setConfirming(null)}>
           <div className="px-5 py-5 text-sm leading-7 text-[var(--muted)]">
-            停用后不会删除「{confirming.name}」的档案。目前还没有未来课次；之后如果已有排课，停用前需要先调整那些课次的授课教师。
-            <div className="mt-5 flex justify-end gap-2">
-              <button type="button" onClick={() => setConfirming(null)} className="rounded-[10px] border border-[var(--line)] px-3.5 py-2.5 text-xs font-bold">取消</button>
-              <button type="button" disabled={pending} onClick={() => changeStatus(confirming, "INACTIVE")} className="rounded-[10px] bg-[#c27b35] px-3.5 py-2.5 text-xs font-bold text-white disabled:opacity-60">
-                {pending ? "正在停用…" : "确认停用"}
-              </button>
-            </div>
+            {confirming.upcomingLessonCount > 0 ? (
+              <>
+                「{confirming.name}」还有 <span className="font-bold text-[#9a6729]">{confirming.upcomingLessonCount}</span> 节未开始的课。停用前必须先在课表里更换授课教师，系统不会静默停用。
+                <div className="mt-5 flex justify-end gap-2">
+                  <button type="button" onClick={() => setConfirming(null)} className="rounded-[10px] border border-[var(--line)] px-3.5 py-2.5 text-xs font-bold">知道了</button>
+                  <Link href="/owner/schedule" className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white">去课表调整 →</Link>
+                </div>
+              </>
+            ) : (
+              <>
+                停用后不会删除「{confirming.name}」的档案。当前没有未开始的课次；停用后新排课不能再选这位老师。
+                <div className="mt-5 flex justify-end gap-2">
+                  <button type="button" onClick={() => setConfirming(null)} className="rounded-[10px] border border-[var(--line)] px-3.5 py-2.5 text-xs font-bold">取消</button>
+                  <button type="button" disabled={pending} onClick={() => changeStatus(confirming, "INACTIVE")} className="rounded-[10px] bg-[#c27b35] px-3.5 py-2.5 text-xs font-bold text-white disabled:opacity-60">
+                    {pending ? "正在停用…" : "确认停用"}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </Modal>
       ) : null}

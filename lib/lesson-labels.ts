@@ -4,6 +4,7 @@ export const lessonStatusLabel = {
   CANCELLED: "已取消",
 } as const;
 
+/** 底层考勤状态标签（请假总称；展示事假/病假请用 leave-kind）。 */
 export const attendanceLabel = {
   NOT_MARKED: "未标记",
   PRESENT: "出勤",

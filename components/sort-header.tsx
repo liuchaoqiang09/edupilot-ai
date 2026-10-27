@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePick } from "@/components/locale-provider";
 import type { SortOrder } from "@/lib/table-sort";
 
 export function SortHeader({
@@ -20,6 +21,7 @@ export function SortHeader({
   query?: string;
   extra?: Record<string, string>;
 }) {
+  const t = usePick();
   const active = sortBy === field;
   const nextOrder = !active ? "asc" : order === "asc" ? "desc" : null;
   const params = new URLSearchParams();
@@ -33,7 +35,7 @@ export function SortHeader({
   }
   const href = params.size > 0 ? `${pathname}?${params}` : pathname;
   const mark = active && order === "asc" ? "↑" : active && order === "desc" ? "↓" : "↕";
-  const title = !active ? `按${label}升序` : order === "asc" ? `按${label}降序` : `恢复${label}默认顺序`;
+  const title = !active ? t(`按${label}升序`, `Sort ${label} ascending`) : order === "asc" ? t(`按${label}降序`, `Sort ${label} descending`) : t(`恢复${label}默认顺序`, `Clear the ${label} sort`);
 
   return (
     <th className="px-4 py-3 font-extrabold" aria-sort={active ? (order === "asc" ? "ascending" : "descending") : "none"}>

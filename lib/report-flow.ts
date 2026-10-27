@@ -1,6 +1,7 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import { AiReportError, type GeneratedReport, normalizeReportLanguage, type ReportLanguage } from "./ai-service";
 import { writeAudit } from "./audit";
+import { notifyReportPublished } from "./parent-notice";
 import { shanghaiDateKey } from "./datetime";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -126,7 +127,10 @@ export async function publishReportByTeacher(
       status: { in: [...teacherPublishable] },
       lessonSession: { teacherId: actor.teacherId, organizationId: actor.organizationId },
     },
-    select: { id: true, status: true, summary: true, strengths: true, issues: true, nextSteps: true, confirmedById: true, confirmedAt: true },
+    select: {
+      id: true, status: true, studentId: true, summary: true, strengths: true, issues: true, nextSteps: true, confirmedById: true, confirmedAt: true,
+      lessonSession: { select: { startAt: true, course: { select: { name: true } } } },
+    },
   });
   if (!report) return { ok: false as const, message: "这份报告不能发布，或你无权操作。" };
   if (!ready(report)) return { ok: false as const, message: "概述、表现、问题和建议都需要填写后才能发布。" };
@@ -141,7 +145,7 @@ export async function publishReportByTeacher(
   }
 
   const now = new Date();
-  return db.$transaction(async (tx) => {
+  const result = await db.$transaction(async (tx) => {
     const published = await tx.teachingReport.updateMany({
       where: {
         id: report.id,
@@ -168,6 +172,17 @@ export async function publishReportByTeacher(
     });
     return { ok: true as const, published: true };
   });
+  if (result.ok && "published" in result && result.published) {
+    await notifyReportPublished({
+      organizationId: actor.organizationId,
+      reportId: report.id,
+      studentId: report.studentId,
+      courseName: report.lessonSession.course.name,
+      when: report.lessonSession.startAt,
+      publishedAt: now,
+    });
+  }
+  return result;
 }
 
 export async function publishReportByOwner(
@@ -221,6 +236,7 @@ export async function reportsVisibleToParent(db: Db, actor: { id: string; organi
     },
     select: {
       id: true,
+      studentId: true,
       summary: true,
       strengths: true,
       issues: true,
@@ -229,8 +245,9 @@ export async function reportsVisibleToParent(db: Db, actor: { id: string; organi
       publishedAt: true,
       student: { select: { name: true } },
       lessonSession: { select: { title: true, startAt: true, teacher: { select: { name: true } } } },
+      photos: { select: { id: true }, orderBy: { createdAt: "asc" } },
+      replies: { where: { parentUserId: actor.id }, select: { body: true }, take: 1 },
     },
     orderBy: { publishedAt: "desc" },
-    take: 30,
   });
 }

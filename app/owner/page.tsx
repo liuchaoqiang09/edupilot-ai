@@ -2,7 +2,9 @@ import Link from "next/link";
 import { OwnerTodayLessons, type TodayLessonCard } from "@/components/owner-today-lessons";
 import { RevenueTrend } from "@/components/revenue-trend";
 import { requireRole } from "@/lib/auth";
+import { pick, type Locale } from "@/lib/locale";
 import { ownerOverview } from "@/lib/dashboard";
+import { lessonTodoHref, ownerTodoLists, renewalTodoHref, reportTodoHref, waitlistTodoHref } from "@/lib/todo-center";
 import { formatClock, formatDateLabel, shanghaiDateKey } from "@/lib/datetime";
 
 function changeText(current: number, previous: number) {
@@ -11,17 +13,25 @@ function changeText(current: number, previous: number) {
   return `${value > 0 ? "+" : ""}${value}% 较上月`;
 }
 
-function hello(name: string) {
+function hello(name: string, locale: Locale) {
   const hour = Number(
     new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Shanghai", hour: "numeric", hourCycle: "h23" }).format(new Date()),
   );
-  const part = hour < 12 ? "早上好" : hour < 18 ? "下午好" : "晚上好";
-  return `${part}，${name}`;
+  const zh = hour < 12 ? "早上好" : hour < 18 ? "下午好" : "晚上好";
+  const en = hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  return pick(locale, `${zh}，${name}`, `${en}, ${name}`);
 }
 
 export default async function OwnerHomePage() {
   const user = await requireRole("OWNER", "owner");
-  const data = await ownerOverview(user.organizationId);
+  const t = (zh: string, en: string) => pick(user.locale, zh, en);
+  const [data, todos] = await Promise.all([ownerOverview(user.organizationId), ownerTodoLists(user.organizationId)]);
+  const unfollowedRenewals = new Set(todos.renewals.map((row) => row.key.split(":")[0])).size;
+  const renewalHref = todos.renewals.length === 1 ? renewalTodoHref(todos.renewals[0].key) : "/owner/todos?group=renewal";
+  const reportHref = todos.reports.length === 1 ? reportTodoHref(todos.reports[0].id) : "/owner/todos?group=reports";
+  const recordHref = todos.records.length === 1 ? lessonTodoHref(todos.records[0].id, shanghaiDateKey(todos.records[0].startAt)) : "/owner/todos?group=records";
+  const trialHref = todos.trials.length === 1 ? lessonTodoHref(todos.trials[0].lessonSession.id, shanghaiDateKey(todos.trials[0].lessonSession.startAt)) : "/owner/todos?group=trials";
+  const waitlistHref = todos.fullQueues.length === 1 ? waitlistTodoHref(todos.fullQueues[0].id) : "/owner/todos?group=waitlist";
   const now = new Date();
   const todayLessons: TodayLessonCard[] = data.lessons.map((lesson) => ({
     id: lesson.id,
@@ -42,9 +52,8 @@ export default async function OwnerHomePage() {
     })),
   }));
   const todaySchedule = `/owner/schedule?view=day&date=${shanghaiDateKey()}`;
-  const pendingRecords = `${todaySchedule}&status=待填写`;
   const maxWeek = Math.max(...data.weeks.map((week) => week.count), 0);
-  const openItems = (data.pendingReports > 0 ? 1 : 0) + (data.missingRecords > 0 ? 1 : 0) + (data.renewingCount > 0 ? 1 : 0);
+  const openItems = (data.pendingReports > 0 ? 1 : 0) + (data.missingRecords > 0 ? 1 : 0) + (unfollowedRenewals > 0 ? 1 : 0) + (data.trialCount > 0 ? 1 : 0) + (todos.fullQueues.length > 0 ? 1 : 0);
   const names = data.pendingNames;
   const reportHint =
     names.length === 0
@@ -57,20 +66,20 @@ export default async function OwnerHomePage() {
     <section>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-[28px] font-semibold tracking-tight">{hello(user.name)}</h1>
-          <p className="mt-2 text-sm leading-7 text-[var(--muted)]">这是{user.organizationName}今天的教学与经营概况。数字只来自当前机构的数据库。</p>
+          <h1 className="text-[28px] font-semibold tracking-tight">{hello(user.name, user.locale)}</h1>
+          <p className="mt-2 text-sm leading-7 text-[var(--muted)]">{t(`这是${user.organizationName}今天的教学与经营概况。数字只来自当前机构的数据库。`, `Today at ${user.organizationName}. These numbers come from this organization.`)}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Link href="/owner/schedule" className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold">▣ 查看课表</Link>
-          <Link href="/owner/students" className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white">＋ 新增学员</Link>
+          <Link href="/owner/schedule" className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold">{t("▣ 查看课表", "Schedule")}</Link>
+          <Link href="/owner/students?create=1" className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white">{t("＋ 新增学员", "+ Add student")}</Link>
         </div>
       </div>
 
       <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard href="/owner/students?status=在读" icon="♙" label="在读学员" value={data.activeStudents} foot={data.newStudents > 0 ? `本月新增 ${data.newStudents}` : "本月还没有新增学员"} up={data.newStudents > 0} />
-        <StatCard href={todaySchedule} icon="▦" label="今日课程" value={data.lessons.length} foot={`已排课 ${data.lessons.length} 节 · ${data.missingRecords} 节待记录`} />
-        <StatCard href="/owner/billing?status=待续费" icon="¥" label="待续费学员" value={data.renewingCount} foot={data.renewingCount === 0 ? "课时都不少于 8 节，周期课程也在有效期内" : "课时不足 8 节，或周期课程已过期"} />
-        <StatCard href="/owner/reports?status=待确认" icon="✳" label="待确认报告" value={data.pendingReports} foot={data.pendingReports === 0 ? "目前没有等待确认的报告" : "草稿、已确认或已退回，家长还看不到"} />
+        <StatCard href="/owner/students?status=在读" icon="♙" label={t("在读学员", "Active students")} value={data.activeStudents} foot={data.newStudents > 0 ? t(`本月新增 ${data.newStudents}`, `${data.newStudents} new this month`) : t("本月还没有新增学员", "No new students this month")} up={data.newStudents > 0} />
+        <StatCard href={todaySchedule} icon="▦" label={t("今日课程", "Today")} value={data.lessons.length} foot={t(`已排课 ${data.lessons.length} 节 · ${data.missingRecords} 节待记录`, `${data.lessons.length} scheduled · ${data.missingRecords} notes missing`)} />
+        <StatCard href={renewalHref} icon="¥" label={t("待续费学员", "Renewals")} value={unfollowedRenewals} foot={unfollowedRenewals === 0 ? t(data.renewingCount > 0 ? "需要续费的学员都已经有跟进记录" : "没有还没跟进的续费", "No renewal is waiting for a first note") : t("待续费，且还没有跟进记录", "Needs renewal and has no follow-up yet")} />
+        <StatCard href={reportHref} icon="✳" label={t("待确认报告", "Reports to review")} value={data.pendingReports} foot={data.pendingReports === 0 ? t("目前没有等待确认的报告", "No reports waiting") : t("草稿、已确认或已退回，家长还看不到", "Draft, confirmed, or returned. Parents cannot see them yet.")} />
       </div>
 
       <div className="mt-4 grid items-stretch gap-4 xl:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.8fr)]">
@@ -113,9 +122,11 @@ export default async function OwnerHomePage() {
             <span className="rounded-full bg-[#fff2df] px-2 py-1 text-[10px] font-bold text-[#9a6729]">{openItems} 项</span>
           </div>
           <ul className="px-5">
-            <Todo icon="✳" title="AI 教学报告待确认" body={reportHint} count={data.pendingReports} href="/owner/reports?status=待确认" action="去查看 →" />
-            <Todo icon="¥" title="学员续费跟进" body={data.renewingCount === 0 ? "目前没有课时不足或周期课程已过期的学员。" : `有 ${data.renewingCount} 位学员需要续费：课时不足 8 节，或周期课程已过期。`} count={data.renewingCount} href="/owner/billing?status=待续费" action="去跟进 →" green />
-            <Todo icon="▣" title="教学记录完成情况" body={data.lessons.length === 0 ? "今天没有需要填写的课次。" : data.missingRecords > 0 ? `今天已结束的课次里，仍有 ${data.missingRecords} 节未提交课堂记录。` : data.lessons.some((lesson) => !lesson.teachingRecord) ? "还没结束的课次，结束后再填写记录。" : "今天已结束的课次都已经有课堂记录。"} count={data.missingRecords} href={pendingRecords} action="查看进度 →" />
+            <Todo icon="✳" title="AI 教学报告待确认" body={reportHint} count={data.pendingReports} href={reportHref} action={todos.reports.length === 1 ? "打开这份报告 →" : "去查看 →"} />
+            <Todo icon="¥" title="学员续费跟进" body={unfollowedRenewals === 0 ? (data.renewingCount > 0 ? "需要续费的学员都已经有跟进记录。" : "目前没有还没跟进的续费。") : `有 ${unfollowedRenewals} 位学员待续费，而且这门课还没有跟进记录。`} count={unfollowedRenewals} href={renewalHref} action={todos.renewals.length === 1 ? "打开这条跟进 →" : "去跟进 →"} green />
+            <Todo icon="▣" title="教学记录完成情况" body={data.lessons.length === 0 ? "今天没有需要填写的课次。" : data.missingRecords > 0 ? `今天已结束的课次里，仍有 ${data.missingRecords} 节未提交课堂记录。` : data.lessons.some((lesson) => !lesson.teachingRecord) ? "还没结束的课次，结束后再填写记录。" : "今天已结束的课次都已经有课堂记录。"} count={data.missingRecords} href={recordHref} action={todos.records.length === 1 ? "打开这节课 →" : "查看进度 →"} />
+            <Todo icon="听" title="未转正的试听" body={data.trialCount === 0 ? "目前没有还没转为报名的试听。" : `有 ${data.trialCount} 条试听还没有转为报名。`} count={data.trialCount} href={trialHref} action={todos.trials.length === 1 ? "打开这节试听 →" : "去课表 →"} />
+            <Todo icon="班" title="满班排队" body={todos.fullQueues.length === 0 ? "没有又满、又有人排队的班级。" : `有 ${todos.fullQueues.length} 个班已经满员，并且还有学生在排队。`} count={todos.fullQueues.length} href={waitlistHref} action={todos.fullQueues.length === 1 ? "打开排队 →" : "去处理 →"} />
           </ul>
         </section>
         <section className="overflow-hidden rounded-2xl border border-[var(--line)] bg-white">

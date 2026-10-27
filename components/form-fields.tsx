@@ -11,6 +11,7 @@ export function TextField({
   required,
   type = "text",
   error,
+  onChange,
 }: {
   label: string;
   name: string;
@@ -19,6 +20,7 @@ export function TextField({
   required?: boolean;
   type?: "text" | "password";
   error?: string;
+  onChange?: () => void;
 }) {
   return (
     <label className="grid gap-1.5 text-xs font-bold">
@@ -32,6 +34,7 @@ export function TextField({
         defaultValue={defaultValue ?? ""}
         placeholder={placeholder}
         required={required}
+        onChange={onChange}
         className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]"
       />
       <FieldError message={error} />

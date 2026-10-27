@@ -12,6 +12,7 @@ export type DirectoryStudent = {
   classNames: string[];
   phones: string[];
   guardianName?: string | null;
+  guardianPhone?: string | null;
 };
 
 function matchesStudent(student: DirectoryStudent, query: string) {

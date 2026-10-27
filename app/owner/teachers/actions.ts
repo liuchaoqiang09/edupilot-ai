@@ -21,9 +21,14 @@ function clean(value: FormDataEntryValue | null) {
 function validateTeacher(formData: FormData) {
   return validateTeacherFields({
     name: clean(formData.get("name")),
+    teacherNo: clean(formData.get("teacherNo")),
     phone: clean(formData.get("phone")),
     wechat: clean(formData.get("wechat")),
   });
+}
+
+function duplicate(error: unknown) {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
 }
 
 async function selectedCourseIds(organizationId: string, formData: FormData) {
@@ -49,15 +54,21 @@ export async function createTeacher(formData: FormData): Promise<ActionResult> {
   if (courses.error) fieldErrors.courses = courses.error;
   if (Object.keys(fieldErrors).length > 0) return { ok: false, fieldErrors };
 
-  await prisma.teacher.create({
-    data: {
-      organizationId: user.organizationId,
-      name: data.name,
-      phone: data.phone,
-      wechat: data.wechat,
-      courses: { create: courses.ids.map((courseId) => ({ courseId })) },
-    },
-  });
+  try {
+    await prisma.teacher.create({
+      data: {
+        organizationId: user.organizationId,
+        name: data.name,
+        teacherNo: data.teacherNo,
+        phone: data.phone,
+        wechat: data.wechat,
+        courses: { create: courses.ids.map((courseId) => ({ courseId })) },
+      },
+    });
+  } catch (error) {
+    if (duplicate(error)) return { ok: false, fieldErrors: { teacherNo: "这个编号在本机构已经存在。" } };
+    throw error;
+  }
   refreshTeachers();
   return { ok: true };
 }
@@ -75,10 +86,12 @@ export async function updateTeacher(id: string, formData: FormData): Promise<Act
   if (courses.error) fieldErrors.courses = courses.error;
   if (Object.keys(fieldErrors).length > 0) return { ok: false, fieldErrors };
 
-  const updated = await prisma.$transaction(async (tx) => {
+  let updated: { count: number };
+  try {
+    updated = await prisma.$transaction(async (tx) => {
     const result = await tx.teacher.updateMany({
       where: { id, organizationId: user.organizationId },
-      data: { name: data.name, phone: data.phone, wechat: data.wechat },
+      data: { name: data.name, teacherNo: data.teacherNo, phone: data.phone, wechat: data.wechat },
     });
     if (result.count !== 1) return result;
     await tx.teacherCourse.deleteMany({ where: { teacherId: id, teacher: { organizationId: user.organizationId } } });
@@ -86,7 +99,11 @@ export async function updateTeacher(id: string, formData: FormData): Promise<Act
       await tx.teacherCourse.createMany({ data: courses.ids.map((courseId) => ({ teacherId: id, courseId })) });
     }
     return result;
-  });
+    });
+  } catch (error) {
+    if (duplicate(error)) return { ok: false, fieldErrors: { teacherNo: "这个编号在本机构已经存在。" } };
+    throw error;
+  }
   if (updated.count !== 1) return { ok: false, message: "找不到这位教师，或你无权修改。" };
 
   refreshTeachers();
@@ -158,12 +175,44 @@ export async function setTeacherStatus(id: string, status: MemberStatus): Promis
   const user = await requireRole("OWNER", "owner");
   if (status !== "ACTIVE" && status !== "INACTIVE") return { ok: false, message: "状态无效。" };
 
-  const result = await prisma.teacher.updateMany({
+  const teacher = await prisma.teacher.findFirst({
     where: { id, organizationId: user.organizationId },
+    select: { id: true, name: true },
+  });
+  if (!teacher) return { ok: false, message: "找不到这位教师，或你无权修改。" };
+
+  if (status === "INACTIVE") {
+    const now = new Date();
+    const [futureCount, samples] = await Promise.all([
+      prisma.lessonSession.count({
+        where: { organizationId: user.organizationId, teacherId: teacher.id, status: { not: "CANCELLED" }, startAt: { gt: now } },
+      }),
+      prisma.lessonSession.findMany({
+        where: { organizationId: user.organizationId, teacherId: teacher.id, status: { not: "CANCELLED" }, startAt: { gt: now } },
+        orderBy: { startAt: "asc" },
+        take: 5,
+        select: { title: true, startAt: true },
+      }),
+    ]);
+    if (futureCount > 0) {
+      const listed = samples
+        .map((lesson) => `${lesson.title ?? "课次"}（${lesson.startAt.toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hourCycle: "h23" })}）`)
+        .join("；");
+      const more = futureCount > samples.length ? `；另有 ${futureCount - samples.length} 节` : "";
+      return {
+        ok: false,
+        message: `「${teacher.name}」还有 ${futureCount} 节未开始的课：${listed}${more}。请先在课表里更换授课教师，再停用。`,
+      };
+    }
+  }
+
+  const result = await prisma.teacher.updateMany({
+    where: { id: teacher.id, organizationId: user.organizationId },
     data: { status },
   });
   if (result.count !== 1) return { ok: false, message: "找不到这位教师，或你无权修改。" };
 
   revalidatePath("/owner/teachers");
-  return { ok: true };
+  revalidatePath("/owner/schedule");
+  return { ok: true, message: status === "INACTIVE" ? "教师已停用。档案保留，新排课不能再选这位老师。" : "教师已恢复在职。" };
 }

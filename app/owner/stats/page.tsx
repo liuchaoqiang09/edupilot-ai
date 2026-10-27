@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requireRole } from "@/lib/auth";
+import { pick } from "@/lib/locale";
 import { ownerSnapshot } from "@/lib/dashboard";
 import { shanghaiDateKey } from "@/lib/datetime";
 import { attendanceLabel } from "@/lib/lesson-labels";
@@ -8,20 +9,21 @@ export default async function OwnerStatsPage() {
   const user = await requireRole("OWNER", "owner");
   const data = await ownerSnapshot(user.organizationId);
   const today = shanghaiDateKey();
+  const t = (zh: string, en: string) => pick(user.locale, zh, en);
   const rows = [
-    { label: "在读学生", value: data.activeStudents, href: "/owner/students?status=在读" },
-    { label: "已停用学生", value: data.inactiveStudents, href: "/owner/students?status=已停用" },
-    { label: "在职教师", value: data.activeTeachers, href: "/owner/teachers?status=在职" },
-    { label: "今日课次", value: data.todayLessons, href: `/owner/schedule?view=day&date=${today}` },
-    { label: "今天起 7 天课次", value: data.upcomingLessons, href: "/owner/schedule?range=next7days" },
-    { label: "待填写教学记录", value: data.pendingRecords, href: "/owner/schedule?status=待填写" },
-    { label: "待确认报告", value: data.pendingReports, href: "/owner/reports?status=待确认" },
+    { label: t("在读学生", "Active students"), value: data.activeStudents, href: "/owner/students?status=在读" },
+    { label: t("已停用学生", "Inactive students"), value: data.inactiveStudents, href: "/owner/students?status=已停用" },
+    { label: t("在职教师", "Active teachers"), value: data.activeTeachers, href: "/owner/teachers?status=在职" },
+    { label: t("今日课次", "Lessons today"), value: data.todayLessons, href: `/owner/schedule?view=day&date=${today}` },
+    { label: t("今天起 7 天课次", "Next 7 days"), value: data.upcomingLessons, href: "/owner/schedule?range=next7days" },
+    { label: t("待填写教学记录", "Notes to write"), value: data.pendingRecords, href: "/owner/schedule?status=待填写" },
+    { label: t("待确认报告", "Reports to review"), value: data.pendingReports, href: "/owner/reports?status=待确认" },
   ];
 
   return (
     <section>
-      <h1 className="text-[28px] font-semibold tracking-tight">基础统计</h1>
-      <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">每一项都是当前机构的实时计数。没有记录时是 0，不是示例数字。</p>
+      <h1 className="text-[28px] font-semibold tracking-tight">{t("基础统计", "Statistics")}</h1>
+      <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">{t("每一项都是当前机构的实时计数。没有记录时是 0，不是示例数字。", "Each number is a live count for this organization. Zero means there is no record.")}</p>
       <div className="mt-6 overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
         <ul>
           {rows.map((row) => (

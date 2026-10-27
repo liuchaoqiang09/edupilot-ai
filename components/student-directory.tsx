@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useState, useTransition } from "react";
+import { FormEvent, useEffect, useState, useTransition } from "react";
 import { FieldError, TextField } from "@/components/form-fields";
+import { InstantSearch } from "@/components/instant-search";
 import { ParentInviteButton } from "@/components/invite-button";
 import { Modal } from "@/components/modal";
 import { SortHeader } from "@/components/sort-header";
@@ -11,7 +12,7 @@ import type { SortOrder } from "@/lib/table-sort";
 import { createStudent, importStudents, setStudentStatus, updateStudent, type FieldErrors, type ImportFailure } from "@/app/owner/students/actions";
 import { linkParent, unlinkParent } from "@/app/owner/students/links";
 import { ParentCombobox } from "@/components/parent-combobox";
-import { studyBadge } from "@/lib/student-profile";
+import { usePick, usePublicLabel } from "@/components/locale-provider";
 
 export type StudentRow = {
   id: string;
@@ -20,10 +21,14 @@ export type StudentRow = {
   grade: string | null;
   age: number | null;
   guardianName: string | null;
+  guardianPhone: string | null;
   contactNote: string | null;
   status: "ACTIVE" | "INACTIVE";
   archiveReason: string | null;
   courses: string[];
+  studyLabel: string;
+  studyClassName: string;
+  hourAdjustments: { id: string; courseName: string; deltaHours: number; reason: string; actorName: string; at: string }[];
 };
 
 export type ParentAccount = { id: string; name: string; email: string; phone: string | null };
@@ -37,7 +42,7 @@ function studentListHref({
 }: {
   q?: string;
   status?: string | null;
-  sortBy: "name" | "studentNo" | null;
+  sortBy: "name" | "studentNo" | "status" | null;
   order: SortOrder | null;
 }) {
   const params = new URLSearchParams();
@@ -52,10 +57,12 @@ function studentListHref({
 }
 
 function FilterNotice({ label, href }: { label: string; href: string }) {
+  const t = usePick();
+  const show = usePublicLabel();
   return (
     <p className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-      <span className="rounded-full bg-[var(--teal-2)] px-2.5 py-1 font-bold text-[var(--teal)]">当前正在筛选：{label}</span>
-      <Link href={href} className="font-bold text-[var(--teal)]">重置</Link>
+      <span className="rounded-full bg-[var(--teal-2)] px-2.5 py-1 font-bold text-[var(--teal)]">{t("当前正在筛选", "Filter")}: {show(label)}</span>
+      <Link href={href} className="font-bold text-[var(--teal)]">{t("重置", "Reset")}</Link>
     </p>
   );
 }
@@ -63,6 +70,10 @@ function FilterNotice({ label, href }: { label: string; href: string }) {
 export function StudentDirectory({
   students,
   query,
+  focusId = null,
+  openCreate = false,
+  launchKey = "",
+  importKey = "",
   statusFilter = null,
   sortBy,
   order,
@@ -71,22 +82,39 @@ export function StudentDirectory({
 }: {
   students: StudentRow[];
   query: string;
+  focusId?: string | null;
+  openCreate?: boolean;
+  launchKey?: string;
+  importKey?: string;
   statusFilter?: "在读" | "已停用" | null;
-  sortBy: "name" | "studentNo" | null;
+  sortBy: "name" | "studentNo" | "status" | null;
   order: SortOrder | null;
   parents: ParentAccount[];
   links: GuardianLink[];
 }) {
   const router = useRouter();
+  const t = usePick();
+  const show = usePublicLabel();
   const [pending, startTransition] = useTransition();
-  const [editing, setEditing] = useState<StudentRow | null | "new">(null);
+  const [editing, setEditing] = useState<StudentRow | null | "new">(openCreate ? "new" : null);
   const [viewing, setViewing] = useState<StudentRow | null>(null);
+  useEffect(() => {
+    if (!focusId) return;
+    const student = students.find((item) => item.id === focusId);
+    if (student) setViewing(student);
+  }, [focusId, students]);
+  useEffect(() => {
+    if (launchKey) setEditing("new");
+  }, [launchKey]);
   const [confirming, setConfirming] = useState<StudentRow | null>(null);
   const [message, setMessage] = useState("");
   const [linkMessage, setLinkMessage] = useState("");
   const [parentId, setParentId] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [importing, setImporting] = useState(false);
+  useEffect(() => {
+    if (importKey) setImporting(true);
+  }, [importKey]);
   const [importMessage, setImportMessage] = useState("");
   const [importFailures, setImportFailures] = useState<ImportFailure[]>([]);
 
@@ -192,41 +220,29 @@ export function StudentDirectory({
     <section>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-[28px] font-semibold tracking-tight">学生管理</h1>
-          <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">学生档案按当前机构保存。停用后仍可查询，不会删除历史记录。</p>
+          <h1 className="text-[28px] font-semibold tracking-tight">{t("学生管理", "Students")}</h1>
+          <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">{t("学生档案按当前机构保存。停用后仍可查询，不会删除历史记录。", "Student records stay in this organization. Inactive students can still be found, and history is kept.")}</p>
           {statusFilter ? <FilterNotice label={statusFilter} href={studentListHref({ sortBy, order })} /> : null}
         </div>
         <div className="flex flex-wrap gap-2">
+          <a href={`/owner/students/export?${new URLSearchParams({ ...(query ? { q: query } : {}), ...(statusFilter ? { status: statusFilter } : {}), ...(sortBy && order ? { sortBy, order } : {}) })}`} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold text-[#385058]">{t("导出当前结果", "Export current results")}</a>
           <button type="button" onClick={() => { setImporting(true); setImportMessage(""); setImportFailures([]); }} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold text-[#385058]">
-            批量导入
+            {t("批量导入", "Import")}
           </button>
           <button type="button" onClick={() => { setEditing("new"); setFieldErrors({}); setMessage(""); }} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white">
-            ＋ 新增学生
+            {t("＋ 新增学生", "+ Add student")}
           </button>
         </div>
       </div>
 
-      <form action="/owner/students" className="mt-6 flex flex-wrap gap-2">
-        {statusFilter ? <input type="hidden" name="status" value={statusFilter} /> : null}
-        {sortBy && order ? (
-          <>
-            <input type="hidden" name="sortBy" value={sortBy} />
-            <input type="hidden" name="order" value={order} />
-          </>
-        ) : null}
-        <input
-          name="q"
-          defaultValue={query}
-          placeholder="搜索姓名或编号"
-          className="w-full rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm outline-none focus:border-[var(--teal)] sm:w-auto sm:min-w-[220px] sm:flex-1"
-        />
-        <button className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold text-[#385058]">搜索</button>
-        {query ? (
-          <Link href={studentListHref({ status: statusFilter, sortBy, order })} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold text-[#385058]">
-            重置
-          </Link>
-        ) : null}
-      </form>
+      <InstantSearch
+        action="/owner/students"
+        query={query}
+        placeholder={t("搜索姓名或编号", "Search name or number")}
+        params={{ status: statusFilter, sortBy, order }}
+        className="mt-6 flex flex-wrap gap-2"
+        inputClassName="w-full rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm outline-none focus:border-[var(--teal)] sm:w-auto sm:min-w-[220px] sm:flex-1"
+      />
       {message ? <p className="mt-3 text-sm text-[#b94d4d]">{message}</p> : null}
 
       <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
@@ -234,21 +250,21 @@ export function StudentDirectory({
           <table className="w-full min-w-[1160px] border-collapse text-left text-xs">
             <thead className="bg-[#fafbf9] text-[10px] tracking-wide text-[#84918e]">
               <tr>
-                <SortHeader label="学生" field="name" sortBy={sortBy} order={order} pathname="/owner/students" query={query} extra={statusFilter ? { status: statusFilter } : undefined} />
-                <th className="px-4 py-3 font-extrabold">家长姓名</th>
-                <SortHeader label="编号" field="studentNo" sortBy={sortBy} order={order} pathname="/owner/students" query={query} extra={statusFilter ? { status: statusFilter } : undefined} />
-                <th className="px-4 py-3 font-extrabold">年级</th>
-                <th className="px-4 py-3 font-extrabold">年龄</th>
-                <th className="px-4 py-3 font-extrabold">报名课程</th>
-                <th className="px-4 py-3 font-extrabold">状态</th>
-                <th className="px-4 py-3 font-extrabold">操作</th>
+                <SortHeader label={t("学生", "Student")} field="name" sortBy={sortBy} order={order} pathname="/owner/students" query={query} extra={statusFilter ? { status: statusFilter } : undefined} />
+                <th className="px-4 py-3 font-extrabold">{t("家长姓名", "Guardian")}</th>
+                <SortHeader label={t("编号", "Number")} field="studentNo" sortBy={sortBy} order={order} pathname="/owner/students" query={query} extra={statusFilter ? { status: statusFilter } : undefined} />
+                <th className="px-4 py-3 font-extrabold">{t("年级", "Grade")}</th>
+                <th className="px-4 py-3 font-extrabold">{t("年龄", "Age")}</th>
+                <th className="px-4 py-3 font-extrabold">{t("报名课程", "Courses")}</th>
+                <SortHeader label={t("状态", "Status")} field="status" sortBy={sortBy} order={order} pathname="/owner/students" query={query} extra={statusFilter ? { status: statusFilter } : undefined} />
+                <th className="px-4 py-3 font-extrabold">{t("操作", "Actions")}</th>
               </tr>
             </thead>
             <tbody>
               {students.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="px-4 py-12 text-center leading-7 text-[var(--muted)]">
-                    {query || statusFilter ? "没有找到符合条件的学生。" : "还没有学生。可以先新增一名学生。"}
+                    {query || statusFilter ? t("没有找到符合条件的学生。", "No matching students.") : t("还没有学生。可以先新增一名学生。", "No students yet.")}
                   </td>
                 </tr>
               ) : (
@@ -258,7 +274,7 @@ export function StudentDirectory({
                     <td className="px-4 py-4">{student.guardianName ?? "—"}</td>
                     <td className="px-4 py-4 text-[var(--muted)]">{student.studentNo ?? "—"}</td>
                     <td className="px-4 py-4">{student.grade ?? "—"}</td>
-                    <td className="px-4 py-4">{student.age ? `${student.age}岁` : "—"}</td>
+                    <td className="px-4 py-4">{student.age ? t(`${student.age}岁`, String(student.age)) : "—"}</td>
                     <td className="px-4 py-4">
                       {student.courses.length === 0 ? <span className="text-[var(--muted)]">—</span> : (
                         <div className="flex flex-wrap gap-1">
@@ -269,17 +285,17 @@ export function StudentDirectory({
                       )}
                     </td>
                     <td className="px-4 py-4">
-                      <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${studyBadge(student.status, student.courses.length > 0).className}`}>
-                        {studyBadge(student.status, student.courses.length > 0).label}
+                      <span className={`whitespace-nowrap rounded-full px-2 py-1 text-[10px] font-bold ${student.studyClassName}`}>
+                        {show(student.studyLabel)}
                       </span>
                     </td>
                     <td className="px-4 py-4">
-                      <button type="button" className="mr-3 font-bold text-[var(--teal)]" onClick={() => { setViewing(student); setLinkMessage(""); setParentId(""); }}>查看</button>
-                      <button type="button" className="mr-3 font-bold text-[var(--teal)]" onClick={() => { setEditing(student); setFieldErrors({}); setMessage(""); }}>编辑</button>
+                      <button type="button" className="mr-3 font-bold text-[var(--teal)]" onClick={() => { setViewing(student); setLinkMessage(""); setParentId(""); }}>{t("查看", "View")}</button>
+                      <button type="button" className="mr-3 font-bold text-[var(--teal)]" onClick={() => { setEditing(student); setFieldErrors({}); setMessage(""); }}>{t("编辑", "Edit")}</button>
                       {student.status === "ACTIVE" ? (
-                        <button type="button" className="font-bold text-[#9a6729]" onClick={() => setConfirming(student)}>停用</button>
+                        <button type="button" className="font-bold text-[#9a6729]" onClick={() => setConfirming(student)}>{t("停用", "Deactivate")}</button>
                       ) : (
-                        <button type="button" className="font-bold text-[var(--teal)]" disabled={pending} onClick={() => changeStatus(student, "ACTIVE")}>恢复在读</button>
+                        <button type="button" className="font-bold text-[var(--teal)]" disabled={pending} onClick={() => changeStatus(student, "ACTIVE")}>{t("恢复在读", "Restore")}</button>
                       )}
                     </td>
                   </tr>
@@ -324,6 +340,7 @@ export function StudentDirectory({
               <TextField label="学生姓名" name="name" required defaultValue={editing === "new" ? "" : editing.name} placeholder="请输入姓名" error={fieldErrors.name} />
               <TextField label="学生编号" name="studentNo" defaultValue={editing === "new" ? "" : editing.studentNo} placeholder="留空则自动生成" error={fieldErrors.studentNo} />
               <TextField label="家长姓名" name="guardianName" defaultValue={editing === "new" ? "" : editing.guardianName} placeholder="例如：林子涵家长" error={fieldErrors.guardianName} />
+              <TextField label="联系人电话" name="guardianPhone" defaultValue={editing === "new" ? "" : editing.guardianPhone} placeholder="选填，11 位手机号" error={fieldErrors.guardianPhone} />
               <TextField label="年级" name="grade" defaultValue={editing === "new" ? "" : editing.grade} placeholder="例如：初二" error={fieldErrors.grade} />
               <label className="grid gap-1.5 text-xs font-bold">
                 <span>年龄</span>
@@ -352,11 +369,28 @@ export function StudentDirectory({
           <div className="space-y-4 px-5 py-5 text-sm">
             <div><div className="text-xs font-bold">姓名</div><p className="mt-1">{viewing.name}</p></div>
             <div><div className="text-xs font-bold">家长姓名</div><p className="mt-1 text-[var(--muted)]">{viewing.guardianName ?? "未填写"}</p></div>
+            <div><div className="text-xs font-bold">家长联系方式</div><p className="mt-1 text-[var(--muted)]">{viewing.guardianPhone ?? "未填写"}</p></div>
             <div><div className="text-xs font-bold">编号</div><p className="mt-1 text-[var(--muted)]">{viewing.studentNo ?? "—"}</p></div>
             <div><div className="text-xs font-bold">年级</div><p className="mt-1 text-[var(--muted)]">{viewing.grade ?? "未填写"}</p></div>
             <div><div className="text-xs font-bold">年龄</div><p className="mt-1 text-[var(--muted)]">{viewing.age ? `${viewing.age}岁` : "未填写"}</p></div>
             <div><div className="text-xs font-bold">联系备注</div><p className="mt-1 leading-6 text-[var(--muted)]">{viewing.contactNote ?? "未填写"}</p></div>
             {viewing.status === "INACTIVE" ? <div><div className="text-xs font-bold">停用原因</div><p className="mt-1 leading-6 text-[var(--muted)]">{viewing.archiveReason?.trim() || "未填写"}</p></div> : null}
+            <div>
+              <div className="text-xs font-bold">{t("课时调整", "Hour changes")}</div>
+              {viewing.hourAdjustments.length === 0 ? (
+                <p className="mt-2 text-[var(--muted)]">{t("还没有课时调整。", "No hour changes yet.")}</p>
+              ) : (
+                <ul className="mt-2 space-y-2">
+                  {viewing.hourAdjustments.map((item) => (
+                    <li key={item.id} className="rounded-xl bg-[#f7faf8] px-3 py-2 text-xs leading-5">
+                      <span className="font-bold">{item.courseName} {item.deltaHours > 0 ? `+${item.deltaHours}` : item.deltaHours} 节</span>
+                      <span className="ml-2 text-[var(--muted)]">{item.at} · {item.actorName}</span>
+                      <p className="text-[var(--muted)]">{item.reason}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
             <div>
               <div className="text-xs font-bold">已绑定家长</div>
               {guardians.length === 0 ? (

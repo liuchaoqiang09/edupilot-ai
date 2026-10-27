@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import type { Role } from "@prisma/client";
+import { normalizeLocale, type Locale } from "@/lib/locale";
 import { prisma } from "@/lib/prisma";
 import { homePathForRoles, type WorkspaceArea } from "@/lib/roles";
 import { readSession, SESSION_COOKIE } from "@/lib/session";
@@ -13,6 +14,7 @@ export type CurrentUser = {
   roles: Role[];
   organizationId: string;
   organizationName: string;
+  locale: Locale;
 };
 
 export async function getCurrentUser(): Promise<CurrentUser | null> {
@@ -35,6 +37,7 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
     roles: user.roles,
     organizationId: user.organizationId,
     organizationName: user.organization.name,
+    locale: normalizeLocale(user.organization.reportLanguage),
   };
 }
 

@@ -2,12 +2,25 @@
 
 import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
-import { creditCourseHours } from "@/lib/course-hours";
+import { writeAudit } from "@/lib/audit";
+import { recordPayment } from "@/lib/billing-ledger";
+import { creditCourseHours, CourseHourError } from "@/lib/course-hours";
 import { requireRole } from "@/lib/auth";
+import { enrollmentStanding, isPaymentMethod } from "@/lib/enrollment-money";
 import { prisma } from "@/lib/prisma";
-import { parseAge } from "@/lib/student-profile";
+import { parseAge, parseMainlandPhone } from "@/lib/student-profile";
 
 export type ActionResult = { ok: boolean; message?: string };
+
+function discountPercent(value: FormDataEntryValue | null) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) return { ok: true as const, percent: null };
+  const match = /^(\d+(?:\.\d{1,2})?)%$/.exec(text);
+  if (!match) return { ok: false as const };
+  const percent = Number(match[1]);
+  if (percent < 0 || percent > 100) return { ok: false as const };
+  return { ok: true as const, percent };
+}
 
 function money(value: FormDataEntryValue | null) {
   const text = typeof value === "string" ? value.trim() : "";
@@ -22,6 +35,8 @@ type EnrollmentLine = {
   classGroupId: string | null;
   dueCents: number;
   paidCents: number;
+  discountPercent: number | null;
+  payMethod: "CASH" | "WECHAT" | "ALIPAY" | "BANK" | "OTHER";
   hours: number;
   byPeriod: boolean;
   startDate: Date | null;
@@ -36,9 +51,11 @@ export async function createEnrollment(formData: FormData): Promise<ActionResult
   const newGrade = text(formData.get("grade"));
   const parsedAge = parseAge(formData.get("age"));
   const guardianName = text(formData.get("guardianName"));
+  const guardianPhone = parseMainlandPhone(text(formData.get("guardianPhone")), true);
   const count = Number(formData.get("count"));
   if (!guardianName) return { ok: false, message: "请填写家长姓名。" };
   if (guardianName.length > 40) return { ok: false, message: "家长姓名不能超过 40 个字。" };
+  if (guardianPhone.error || !guardianPhone.phone) return { ok: false, message: guardianPhone.error ?? "请填写联系人电话。" };
   if (mode === "new") {
     if (!newName) return { ok: false, message: "请填写学生姓名。" };
     if (newName.length > 40) return { ok: false, message: "姓名不能超过 40 个字。" };
@@ -57,7 +74,7 @@ export async function createEnrollment(formData: FormData): Promise<ActionResult
     : null;
   if (mode === "existing" && !existing) return { ok: false, message: "学员不存在，或不属于当前机构。" };
 
-  const drafts: { courseId: string; classGroupId: string; dueCents: number; paidCents: number; hours: number; startDate: Date | null; endDate: Date | null }[] = [];
+  const drafts: { courseId: string; classGroupId: string; dueCents: number; paidCents: number; discountPercent: number | null; payMethod: EnrollmentLine["payMethod"]; hours: number; startDate: Date | null; endDate: Date | null }[] = [];
   const seen = new Set<string>();
   for (let index = 0; index < count; index += 1) {
     const label = `第 ${index + 1} 门`;
@@ -65,15 +82,19 @@ export async function createEnrollment(formData: FormData): Promise<ActionResult
     const classGroupId = text(formData.get(`classGroupId:${index}`));
     const dueCents = money(formData.get(`amountDue:${index}`));
     const paidCents = money(formData.get(`amount:${index}`));
+    const payMethod = text(formData.get(`payMethod:${index}`)) || "CASH";
+    const discount = discountPercent(formData.get(`discountPercent:${index}`));
     const hours = Number(formData.get(`hoursAdded:${index}`));
     const startDate = calendarDate(formData.get(`startDate:${index}`));
     const endDate = calendarDate(formData.get(`endDate:${index}`));
     if (!courseId) return { ok: false, message: `${label}还没有选择课程。` };
     if (dueCents === null || paidCents === null) return { ok: false, message: `${label}的金额需要是 0 或正数，最多两位小数。` };
+    if (!discount.ok) return { ok: false, message: `${label}的折扣率请填写百分数，例如 80%。` };
+    if (paidCents !== null && paidCents > 0 && !isPaymentMethod(payMethod)) return { ok: false, message: `${label}请选择收款方式。` };
     const pair = `${courseId}:${classGroupId}`;
     if (seen.has(pair)) return { ok: false, message: `${label}和前面的课程、班级重复了。` };
     seen.add(pair);
-    drafts.push({ courseId, classGroupId, dueCents, paidCents, hours, startDate, endDate });
+    drafts.push({ courseId, classGroupId, dueCents, paidCents, discountPercent: discount.percent, payMethod: isPaymentMethod(payMethod) ? payMethod : "CASH", hours, startDate, endDate });
   }
 
   const courses = await prisma.course.findMany({
@@ -104,6 +125,8 @@ export async function createEnrollment(formData: FormData): Promise<ActionResult
       classGroupId: classGroup?.id ?? null,
       dueCents: draft.dueCents,
       paidCents: draft.paidCents,
+      discountPercent: draft.discountPercent,
+      payMethod: draft.payMethod,
       hours: draft.hours,
       byPeriod,
       startDate: draft.startDate,
@@ -111,6 +134,7 @@ export async function createEnrollment(formData: FormData): Promise<ActionResult
     });
   }
 
+  try {
   await prisma.$transaction(async (tx) => {
     const student = existing ?? await tx.student.create({
       data: {
@@ -119,6 +143,7 @@ export async function createEnrollment(formData: FormData): Promise<ActionResult
         grade: newGrade || null,
         age: parsedAge.age,
         guardianName,
+        guardianPhone: guardianPhone.phone,
         studentNo: await nextStudentNo(tx, user.organizationId),
       },
       select: { id: true },
@@ -128,25 +153,62 @@ export async function createEnrollment(formData: FormData): Promise<ActionResult
         where: { id: existing.id, organizationId: user.organizationId, OR: [{ guardianName: null }, { guardianName: "" }] },
         data: { guardianName },
       });
+      await tx.student.updateMany({
+        where: { id: existing.id, organizationId: user.organizationId },
+        data: { guardianPhone: guardianPhone.phone },
+      });
     }
+    const recentCutoff = new Date(Date.now() - 8_000);
     for (const line of lines) {
-      const status = line.paidCents <= 0 ? "UNPAID" : line.paidCents >= line.dueCents ? "PAID" : "PARTIAL";
-      await tx.enrollment.create({
+      const duplicate = await tx.enrollment.findFirst({
+        where: {
+          organizationId: user.organizationId,
+          studentId: student.id,
+          courseId: line.courseId,
+          classGroupId: line.classGroupId,
+          createdById: user.id,
+          hoursAdded: line.byPeriod ? 0 : line.hours,
+          createdAt: { gte: recentCutoff },
+        },
+        select: { id: true },
+      });
+      if (duplicate) throw new CourseHourError("刚才已经保存过相同的报名，没有重复写入。请刷新后核对。");
+      const enrollment = await tx.enrollment.create({
         data: {
           organizationId: user.organizationId,
           studentId: student.id,
           courseId: line.courseId,
           classGroupId: line.classGroupId,
           amountDue: new Prisma.Decimal(line.dueCents).dividedBy(100),
-          amount: new Prisma.Decimal(line.paidCents).dividedBy(100),
+          amount: new Prisma.Decimal(0),
+          discountPercent: line.discountPercent == null ? null : new Prisma.Decimal(line.discountPercent),
           hoursAdded: line.byPeriod ? 0 : line.hours,
           startDate: line.byPeriod ? line.startDate : null,
           endDate: line.byPeriod ? line.endDate : null,
-          status,
-          paidAt: line.paidCents > 0 ? new Date() : null,
+          status: enrollmentStanding(line.dueCents, 0, line.discountPercent),
+          paidAt: null,
           createdById: user.id,
         },
+        select: { id: true },
       });
+      if (line.classGroupId) {
+        await tx.classWaitlist.deleteMany({
+          where: { organizationId: user.organizationId, studentId: student.id, classGroupId: line.classGroupId },
+        });
+      }
+      if (line.paidCents > 0) {
+        await recordPayment(tx, {
+          organizationId: user.organizationId,
+          actorId: user.id,
+          actorName: user.name,
+          enrollmentId: enrollment.id,
+          amountCents: line.paidCents,
+          method: line.payMethod,
+          paidAt: new Date(),
+          reason: "",
+          kind: "collect",
+        });
+      }
       if (!line.byPeriod) {
         await creditCourseHours(tx, {
           organizationId: user.organizationId,
@@ -155,13 +217,60 @@ export async function createEnrollment(formData: FormData): Promise<ActionResult
           hours: line.hours,
         });
       }
+      const priorFollowUp = await tx.renewalFollowUp.findFirst({
+        where: { organizationId: user.organizationId, studentId: student.id, courseId: line.courseId, outcome: { not: "RENEWED" } },
+        select: { id: true },
+      });
+      if (priorFollowUp) {
+        await tx.renewalFollowUp.create({
+          data: {
+            organizationId: user.organizationId,
+            studentId: student.id,
+            courseId: line.courseId,
+            outcome: "RENEWED",
+            note: "这门课又产生了新报名，跟进自动标为已续费。",
+            createdById: user.id,
+          },
+        });
+      }
+    }
+    const courseIds = [...new Set(lines.map((line) => line.courseId))];
+    const converted = await tx.lessonStudent.findMany({
+      where: {
+        organizationId: user.organizationId,
+        studentId: student.id,
+        seat: "TRIAL",
+        lessonSession: { courseId: { in: courseIds }, status: { not: "CANCELLED" } },
+      },
+      select: { id: true, lessonSession: { select: { title: true } } },
+    });
+    if (converted.length > 0) {
+      await tx.lessonStudent.updateMany({
+        where: { id: { in: converted.map((row) => row.id) }, organizationId: user.organizationId, seat: "TRIAL" },
+        data: { seat: "CONVERTED", lastAction: "试听转为报名" },
+      });
+      for (const row of converted) {
+        await writeAudit(tx, {
+          organizationId: user.organizationId,
+          actorId: user.id,
+          action: "TRIAL_CONVERTED",
+          targetType: "LessonStudent",
+          targetId: row.id,
+          detail: `试听「${row.lessonSession.title ?? "课次"}」已转为报名`,
+        });
+      }
     }
   });
+  } catch (error) {
+    if (error instanceof CourseHourError) return { ok: false, message: error.message };
+    throw error;
+  }
 
   revalidatePath("/owner/billing");
   revalidatePath("/owner/students");
   revalidatePath("/owner");
   revalidatePath("/owner/schedule");
+  revalidatePath("/owner/audit");
   const periodCount = lines.filter((line) => line.byPeriod).length;
   const lessonCount = lines.length - periodCount;
   const parts = [mode === "new" ? `已建立学生档案，并记录 ${lines.length} 门报名` : `已记录 ${lines.length} 门报名`];

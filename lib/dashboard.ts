@@ -21,7 +21,10 @@ function tally(rows: { attendanceStatus: AttendanceStatus; _count: { _all: numbe
   const counts = Object.fromEntries(attendanceOrder.map((status) => [status, 0])) as Record<AttendanceStatus, number>;
   for (const row of rows) counts[row.attendanceStatus] = row._count._all;
   const total = attendanceOrder.reduce((sum, status) => sum + counts[status], 0);
-  return { counts, total };
+  const due = counts.PRESENT + counts.LATE + counts.ABSENT + counts.LEAVE;
+  const attended = counts.PRESENT + counts.LATE;
+  const rate = due > 0 ? Math.round((attended / due) * 100) : null;
+  return { counts, total, due, attended, rate };
 }
 
 export async function ownerSnapshot(organizationId: string) {
@@ -39,7 +42,7 @@ export async function ownerSnapshot(organizationId: string) {
     attendanceRows,
     recentLessons,
   ] = await Promise.all([
-    prisma.student.count({ where: { ...org, status: "ACTIVE" } }),
+    prisma.student.count({ where: { ...org, status: "ACTIVE", enrollments: { some: {} } } }),
     prisma.student.count({ where: { ...org, status: "INACTIVE" } }),
     prisma.teacher.count({ where: { ...org, status: "ACTIVE" } }),
     prisma.lessonSession.count({ where: { ...activeLesson, startAt: { gte: time.todayStart, lt: time.todayEnd } } }),
@@ -130,7 +133,7 @@ export async function ownerOverview(organizationId: string) {
     startAt: { gte: time.todayStart, lt: time.todayEnd },
   };
   const revenueWindow = revenueBounds(time.today);
-  const [activeStudents, newStudents, enrollmentsThisMonth, enrollmentsLastMonth, lessons, pendingReports, pendingReportRows, renewingCount, paidRows] = await Promise.all([
+  const [activeStudents, newStudents, enrollmentsThisMonth, enrollmentsLastMonth, lessons, pendingReports, pendingReportRows, renewingCount, paidRows, trialCount] = await Promise.all([
     prisma.student.count({ where: { organizationId, status: "ACTIVE", enrollments: { some: {} } } }),
     prisma.student.count({ where: { organizationId, createdAt: { gte: month.start, lt: month.end } } }),
     prisma.enrollment.findMany({
@@ -171,9 +174,12 @@ export async function ownerOverview(organizationId: string) {
       select: { student: { select: { name: true } } },
     }),
     findRenewingStudentIds(prisma, organizationId).then((ids) => ids.size),
-    prisma.enrollment.findMany({
-      where: { organizationId, paidAt: { gte: revenueWindow.start, lt: revenueWindow.end } },
+    prisma.payment.findMany({
+      where: { organizationId, voidedAt: null, paidAt: { gte: revenueWindow.start, lt: revenueWindow.end } },
       select: { amount: true, paidAt: true },
+    }),
+    prisma.lessonStudent.count({
+      where: { organizationId, seat: "TRIAL", lessonSession: { status: { not: "CANCELLED" } } },
     }),
   ]);
 
@@ -207,6 +213,7 @@ export async function ownerOverview(organizationId: string) {
     missingRecords: endedCount - recordedEnded,
     pendingReports,
     renewingCount,
+    trialCount,
     pendingNames: [...new Set(pendingReportRows.map((row) => row.student.name))],
     rates: {
       recorded: percent(recordedEnded, endedCount),
@@ -241,11 +248,10 @@ export async function teacherSnapshot(organizationId: string, teacherId: string 
     prisma.lessonSession.findMany({
       where: pendingWhere,
       orderBy: { startAt: "desc" },
-      take: 5,
       select: { id: true, title: true, startAt: true, course: { select: { name: true } } },
     }),
     prisma.teachingReport.count({
-      where: { organizationId, status: { in: ["DRAFT", "RETURNED"] }, lessonSession: { teacherId } },
+      where: { organizationId, status: { in: ["DRAFT", "CONFIRMED", "RETURNED"] }, lessonSession: { teacherId } },
     }),
     prisma.teachingReport.findMany({
       where: { organizationId, status: "PUBLISHED", lessonSession: { teacherId } },

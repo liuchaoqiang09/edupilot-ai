@@ -1,9 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { usePick } from "@/components/locale-provider";
 
 export function LogoutButton({ className = "" }: { className?: string }) {
   const [pending, setPending] = useState(false);
+  const t = usePick();
 
   async function logout() {
     setPending(true);
@@ -21,7 +23,7 @@ export function LogoutButton({ className = "" }: { className?: string }) {
       disabled={pending}
       className={`rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold text-[#385058] disabled:opacity-60 ${className}`}
     >
-      {pending ? "正在退出…" : "退出登录"}
+      {pending ? t("正在退出…", "Signing out…") : t("退出登录", "Sign out")}
     </button>
   );
 }

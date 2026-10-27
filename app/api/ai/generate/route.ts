@@ -52,7 +52,11 @@ export async function POST(request: Request) {
     return true;
   });
   if (targets.length === 0) {
-    return Response.json({ ok: true, message: `${skipped.join("、")}的报告已确认或已发布，没有覆盖。` });
+    return Response.json({
+      ok: true,
+      results: skipped.map((name) => ({ name, ok: true, message: "已确认或已发布，没有覆盖。" })),
+      message: `${skipped.join("、")}的报告已确认或已发布，没有覆盖。`,
+    });
   }
 
   const organization = await prisma.organization.findUnique({
@@ -61,9 +65,13 @@ export async function POST(request: Request) {
   });
   const settings = readOrgReportSettings(organization);
   const names = lesson.students.map((row) => row.student.name);
-  let created = 0;
-  try {
-    for (const row of targets) {
+  const results: { name: string; ok: boolean; message: string }[] = skipped.map((name) => ({
+    name,
+    ok: true,
+    message: "已确认或已发布，没有覆盖。",
+  }));
+  for (const row of targets) {
+    try {
       const history = await recentSummariesForPrompt(prisma, {
         enabled: settings.aiUseRecentSummaries,
         organizationId: user.organizationId,
@@ -93,19 +101,21 @@ export async function POST(request: Request) {
             studentNames: names,
           }),
       );
-      created += 1;
+      results.push({ name: row.student.name, ok: true, message: "已生成草稿。" });
+    } catch (error) {
+      const message = error instanceof AiReportError ? error.message : "生成失败，教学记录已保留。";
+      results.push({ name: row.student.name, ok: false, message });
     }
-  } catch (error) {
-    const message = error instanceof AiReportError ? error.message : "生成失败，教学记录已保留。请稍后重试。";
-    return fail(created > 0 ? `已生成 ${created} 份草稿。${message}` : message, 502);
   }
 
   revalidatePath("/teacher/records");
   revalidatePath("/teacher/reports");
   revalidatePath("/owner/reports");
   revalidatePath("/parent/reports");
+  const failed = results.filter((item) => !item.ok);
   return Response.json({
-    ok: true,
-    message: skipped.length ? `已生成草稿。${skipped.join("、")}的报告已确认或已发布，没有覆盖。` : "已为名单中的学生生成草稿。",
+    ok: failed.length === 0,
+    results,
+    message: failed.length === 0 ? "本节课要生成的报告都已处理。" : `${failed.length} 名学生没有生成成功，其余学生的结果见下方。`,
   });
 }

@@ -1,3 +1,12 @@
+import { pick, type Locale } from "@/lib/locale";
+
+export function parseMainlandPhone(value: string, required: boolean) {
+  const phone = value.trim();
+  if (!phone) return required ? { phone: null, error: "请填写联系人电话。" } : { phone: null as string | null };
+  if (!/^1[3-9]\d{9}$/.test(phone)) return { phone: null, error: "联系人电话需要是 11 位中国大陆手机号。" };
+  return { phone };
+}
+
 export function parseAge(value: FormDataEntryValue | null) {
   const text = typeof value === "string" ? value.trim() : "";
   if (!text) return { age: null as number | null };
@@ -7,8 +16,10 @@ export function parseAge(value: FormDataEntryValue | null) {
   return { age };
 }
 
-export function studentFacts(grade: string | null | undefined, age: number | null | undefined) {
-  return `${grade?.trim() || "未填年级"} · ${age ? `${age}岁` : "未填年龄"}`;
+export function studentFacts(grade: string | null | undefined, age: number | null | undefined, locale: Locale = "zh-CN") {
+  const gradeText = grade?.trim() || pick(locale, "未填年级", "Grade not set");
+  const ageText = age ? pick(locale, `${age}岁`, `${age} years`) : pick(locale, "未填年龄", "Age not set");
+  return `${gradeText} · ${ageText}`;
 }
 
 export const unenrolledBadgeClass = "bg-[#fdecec] text-[#b94d4d]";

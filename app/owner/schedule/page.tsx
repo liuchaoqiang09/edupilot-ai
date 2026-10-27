@@ -1,14 +1,17 @@
 import { ScheduleBoard, type ScheduleLesson } from "@/components/schedule-board";
 import { requireRole } from "@/lib/auth";
 import { dayRange, formatClock, formatDateLabel, formatMonthDay, parseDateKey, shanghaiDateKey, shanghaiMinutes, shiftDate, weekStartKey } from "@/lib/datetime";
+import { normalizeRoom } from "@/lib/lesson-conflicts";
+import { makeupLabel } from "@/lib/lesson-seat";
 import { prisma } from "@/lib/prisma";
+import { Pager, pageOf } from "@/components/pager";
 
 const weekdayNames = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
 
 export default async function OwnerSchedulePage({
   searchParams,
 }: {
-  searchParams: Promise<{ date?: string; view?: string; week?: string; status?: string; range?: string }>;
+  searchParams: Promise<{ date?: string; view?: string; week?: string; status?: string; range?: string; page?: string; room?: string; lesson?: string; form?: string; open?: string }>;
 }) {
   const user = await requireRole("OWNER", "owner");
   const params = await searchParams;
@@ -34,7 +37,7 @@ export default async function OwnerSchedulePage({
       ? { organizationId: user.organizationId, status: { not: "CANCELLED" as const }, startAt: { gte: next7Range.start, lt: next7Range.end } }
       : { organizationId: user.organizationId, startAt: { gte: range.start, lt: range.end } };
 
-  const [lessons, classes, teachers] = await Promise.all([
+  const [lessons, classes, teachers, rooms] = await Promise.all([
     prisma.lessonSession.findMany({
       where: lessonWhere,
       include: {
@@ -42,6 +45,7 @@ export default async function OwnerSchedulePage({
         classGroup: { select: { name: true } },
         teacher: { select: { id: true, name: true } },
         teachingRecord: { select: { id: true } },
+        classroom: { select: { id: true, name: true } },
         students: {
           include: {
             student: {
@@ -52,6 +56,7 @@ export default async function OwnerSchedulePage({
                 parentLinks: { select: { parent: { select: { name: true, phone: true, email: true } } } },
               },
             },
+            makeupSource: { select: { lessonSession: { select: { startAt: true } } } },
           },
           orderBy: { student: { name: "asc" } },
         },
@@ -67,6 +72,11 @@ export default async function OwnerSchedulePage({
       where: { organizationId: user.organizationId, status: "ACTIVE" },
       select: { id: true, name: true, user: { select: { roles: true } } },
       orderBy: { name: "asc" },
+    }),
+    prisma.classroom.findMany({
+      where: { organizationId: user.organizationId },
+      orderBy: [{ available: "desc" }, { name: "asc" }],
+      select: { id: true, name: true, capacity: true, available: true },
     }),
   ]);
 
@@ -92,7 +102,8 @@ export default async function OwnerSchedulePage({
       className: lesson.classGroup.name,
       teacherId: lesson.teacher.id,
       teacherName: lesson.teacher.name,
-      location: lesson.location,
+      location: lesson.classroom?.name ?? lesson.location,
+      classroomId: lesson.classroomId,
       status: lesson.status,
       students: lesson.students.map((row) => ({
         id: row.studentId,
@@ -103,12 +114,42 @@ export default async function OwnerSchedulePage({
           ? "未绑定家长"
           : row.student.parentLinks.map((link) => `${link.parent.name} ${link.parent.phone || link.parent.email}`).join("、"),
         attendanceStatus: row.attendanceStatus,
+        leaveKind: row.leaveKind,
         attendanceNote: row.attendanceNote,
+        lessonStudentId: row.id,
+        seat: row.seat,
+        makeupText: row.makeupSource ? makeupLabel(row.makeupSource.lessonSession.startAt) : null,
       })),
     };
   });
 
+  const selectedRoom = rooms.find((room) => room.id === params.room) ?? null;
+  const roomLessons = selectedRoom
+    ? mapped.filter((lesson) => lesson.classroomId === selectedRoom.id || (!lesson.classroomId && normalizeRoom(lesson.location) === normalizeRoom(selectedRoom.name)))
+    : mapped;
+  const lessonId = params.lesson ?? "";
+  const openedLesson = lessonId ? roomLessons.find((lesson) => lesson.id === lessonId) : null;
+  const orderedLessons = openedLesson ? [openedLesson, ...roomLessons.filter((lesson) => lesson.id !== openedLesson.id)] : roomLessons;
+  const window = pageOf(params.page, orderedLessons.length);
+  const exportQuery = new URLSearchParams();
+  if (params.date) exportQuery.set("date", params.date);
+  if (params.view) exportQuery.set("view", params.view);
+  if (params.week) exportQuery.set("week", params.week);
+  if (params.status) exportQuery.set("status", params.status);
+  if (params.range) exportQuery.set("range", params.range);
+  if (selectedRoom) exportQuery.set("room", selectedRoom.id);
+  function pageHref(page: number) {
+    const query = new URLSearchParams(exportQuery);
+    if (page > 1) query.set("page", String(page));
+    const text = query.toString();
+    return text ? `/owner/schedule?${text}` : "/owner/schedule";
+  }
+
   return (
+    <>
+    <div className="mb-3 flex justify-end">
+      <a href={`/owner/schedule/export?${exportQuery}`} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold text-[#385058]">导出当前结果</a>
+    </div>
     <ScheduleBoard
       view={view}
       pendingRecords={pendingRecords}
@@ -125,7 +166,11 @@ export default async function OwnerSchedulePage({
       })}
       previousWeek={weekStart <= earliestWeek ? null : previousCandidate < earliestWeek ? earliestWeek : previousCandidate}
       nextWeek={shiftDate(weekStart, 7)}
-      lessons={mapped}
+      lessons={orderedLessons.slice(window.start, window.start + 20)}
+      openLessonId={lessonId}
+      openFormKey={params.form === "lesson" || params.form === "recurring" ? `${params.form}:${params.open ?? "1"}` : ""}
+      rooms={rooms}
+      roomId={selectedRoom?.id ?? ""}
       classes={classes.map((item) => ({
         id: item.id,
         name: item.name,
@@ -136,5 +181,9 @@ export default async function OwnerSchedulePage({
       }))}
       teachers={teachers.map((teacher) => ({ id: teacher.id, name: teacher.name, linked: teacher.user?.roles.includes("TEACHER") ?? false }))}
     />
+    <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
+      <Pager page={window.page} pages={window.pages} href={pageHref} />
+    </div>
+    </>
   );
 }

@@ -13,9 +13,12 @@ export default async function TeacherReportsPage() {
   const reports = teacher
     ? await prisma.teachingReport.findMany({
         where: { organizationId: user.organizationId, lessonSession: { teacherId: teacher.id } },
-        include: { student: { select: { name: true } }, lessonSession: { select: { title: true, startAt: true } } },
+        include: {
+          student: { select: { name: true } },
+          lessonSession: { select: { title: true, startAt: true } },
+          reads: { orderBy: { openedAt: "asc" }, select: { openedAt: true, parent: { select: { name: true } } } },
+        },
         orderBy: { updatedAt: "desc" },
-        take: 30,
       })
     : [];
 
@@ -33,7 +36,14 @@ export default async function TeacherReportsPage() {
                     <div className="text-sm font-bold">{report.student.name} · {report.lessonSession.title ?? "课次"}</div>
                     <div className="mt-1 text-xs text-[var(--muted)]">{formatDateLabel(shanghaiDateKey(report.lessonSession.startAt))} {formatClock(report.lessonSession.startAt)}</div>
                   </div>
-                  <span className="rounded-full bg-[#edf5f1] px-2 py-1 text-[10px] font-bold text-[#34725d]">{reportStatusLabel[report.status]}</span>
+                  <div className="text-right">
+                    <span className="rounded-full bg-[#edf5f1] px-2 py-1 text-[10px] font-bold text-[#34725d]">{reportStatusLabel[report.status]}</span>
+                    {report.status === "PUBLISHED" ? (
+                      <div className="mt-1 text-[10px] text-[var(--muted)]">
+                        {report.reads.length > 0 ? `已查看 · ${report.reads.map((read) => read.parent.name).join("、")}` : "未查看"}
+                      </div>
+                    ) : null}
+                  </div>
                 </Link>
               </li>
             ))}

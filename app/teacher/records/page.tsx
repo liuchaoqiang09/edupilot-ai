@@ -1,6 +1,6 @@
 import { TeacherRecords } from "@/components/teacher-records";
 import { requireRole } from "@/lib/auth";
-import { formatClock, formatDateLabel, shanghaiDateKey } from "@/lib/datetime";
+import { formatClock, formatDateLabel, formatDateTime, shanghaiDateKey } from "@/lib/datetime";
 import { prisma } from "@/lib/prisma";
 
 export default async function TeacherRecordsPage({
@@ -20,10 +20,9 @@ export default async function TeacherRecordsPage({
         include: {
           teachingRecord: true,
           students: { include: { student: { select: { name: true, status: true, archiveReason: true } } }, orderBy: { student: { name: "asc" } } },
-          reports: { include: { student: { select: { name: true } } }, orderBy: { student: { name: "asc" } } },
+          reports: { include: { student: { select: { name: true } }, reads: { orderBy: { openedAt: "asc" }, select: { openedAt: true, parent: { select: { name: true } } } }, photos: { select: { id: true }, orderBy: { createdAt: "asc" } }, replies: { select: { body: true, parent: { select: { name: true } } }, orderBy: { updatedAt: "desc" } } }, orderBy: { student: { name: "asc" } } },
         },
         orderBy: { startAt: "desc" },
-        take: 30,
       })
     : [];
   if (teacher && params.lesson && !lessons.some((lesson) => lesson.id === params.lesson)) {
@@ -32,7 +31,7 @@ export default async function TeacherRecordsPage({
       include: {
         teachingRecord: true,
         students: { include: { student: { select: { name: true, status: true, archiveReason: true } } }, orderBy: { student: { name: "asc" } } },
-        reports: { include: { student: { select: { name: true } } }, orderBy: { student: { name: "asc" } } },
+        reports: { include: { student: { select: { name: true } }, reads: { orderBy: { openedAt: "asc" }, select: { openedAt: true, parent: { select: { name: true } } } }, photos: { select: { id: true }, orderBy: { createdAt: "asc" } }, replies: { select: { body: true, parent: { select: { name: true } } }, orderBy: { updatedAt: "desc" } } }, orderBy: { student: { name: "asc" } } },
       },
     });
     if (extra) lessons.unshift(extra);
@@ -51,6 +50,7 @@ export default async function TeacherRecordsPage({
       lessons={lessons.map((lesson) => ({
         id: lesson.id,
         title: lesson.title ?? "课次",
+        dateKey: shanghaiDateKey(lesson.startAt),
         when: `${formatDateLabel(shanghaiDateKey(lesson.startAt))} ${formatClock(lesson.startAt)}–${formatClock(lesson.endAt)}`,
         ended: lesson.endAt.getTime() <= now,
         students: lesson.students.map((row) => ({
@@ -80,6 +80,13 @@ export default async function TeacherRecordsPage({
           homeworkSummary: report.homeworkSummary ?? "",
           revisionNote: report.revisionNote,
           revision: report.revision,
+          photos: report.photos,
+          parentReply: report.replies.map((reply) => `${reply.parent.name}：${reply.body}`).join("\n"),
+          readText: report.status !== "PUBLISHED"
+            ? "未查看。报告发布后才会记录家长是否打开。"
+            : report.reads.length > 0
+              ? `已查看。${report.reads.map((read) => `${read.parent.name} 首次打开 ${formatDateTime(read.openedAt)}`).join("；")}`
+              : "未查看。家长还没有打开。",
         })),
       }))}
     />

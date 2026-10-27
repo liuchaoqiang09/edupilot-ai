@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireRole } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { notifyHomeworkSaved } from "@/lib/parent-notice";
 import { publishReportByTeacher } from "@/lib/report-flow";
 
 export type ActionResult = { ok: boolean; message?: string };
@@ -18,10 +19,12 @@ function tooLong(value: string) {
 }
 
 function refresh() {
+  revalidatePath("/teacher");
   revalidatePath("/teacher/records");
   revalidatePath("/teacher/reports");
   revalidatePath("/owner/reports");
   revalidatePath("/parent/reports");
+  revalidatePath("/parent/homework");
 }
 
 async function ownLesson(lessonId: string) {
@@ -55,6 +58,7 @@ export async function saveTeachingRecord(lessonId: string, formData: FormData): 
     return { ok: false, message: "每一项不能超过 2000 个字。" };
   }
 
+  const previousHomework = lesson.teachingRecord?.homework ?? null;
   await prisma.teachingRecord.upsert({
     where: { lessonSessionId: lesson.id },
     create: {
@@ -74,6 +78,15 @@ export async function saveTeachingRecord(lessonId: string, formData: FormData): 
       homework: homework || null,
       teacherPrivateNote: teacherPrivateNote || null,
     },
+  });
+  await notifyHomeworkSaved({
+    organizationId: user.organizationId,
+    lessonId: lesson.id,
+    title: lesson.title,
+    when: lesson.startAt,
+    studentIds: lesson.students.map((row) => row.studentId),
+    previous: previousHomework,
+    homework,
   });
   refresh();
   return { ok: true };

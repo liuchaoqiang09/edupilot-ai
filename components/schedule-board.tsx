@@ -2,25 +2,23 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useMemo, useState, useTransition } from "react";
-import { cancelLesson, createLesson, createRecurringLessons, removeLessonStudent, updateLessonTeacher, type FieldErrors, type RecurringFieldErrors } from "@/app/owner/schedule/actions";
+import { FormEvent, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { cancelLesson, changeLessonClassroom, createLesson, createRecurringLessons, removeLessonStudent, rescheduleLesson, updateLessonTeacher, type FieldErrors, type RecurringFieldErrors } from "@/app/owner/schedule/actions";
 import { shiftDate } from "@/lib/datetime";
+import { dateFlashClass, DayStep, useDateFlash } from "@/components/day-step";
 import { DateField, DateTimeField } from "@/components/date-field";
-import { FieldError, TextField } from "@/components/form-fields";
+import { FieldError } from "@/components/form-fields";
 import { Modal } from "@/components/modal";
 import { AttendanceBreakdown, AttendanceRing, attendanceRate } from "@/components/attendance-ring";
 import { LessonClock } from "@/components/lesson-clock";
 import { LessonRosterPicker } from "@/components/lesson-roster-picker";
+import { attendanceDisplayLabel, attendanceDisplayTone } from "@/lib/leave-kind";
 import { attendanceLabel, lessonStatusLabel } from "@/lib/lesson-labels";
+import { seatLabel } from "@/lib/lesson-seat";
 import { WeekGrid } from "@/components/week-grid";
+import { usePick } from "@/components/locale-provider";
 import { coursePalette } from "@/lib/course-colors";
-
-const attendanceTone: Partial<Record<keyof typeof attendanceLabel, string>> = {
-  PRESENT: "font-bold text-[#34725d]",
-  LEAVE: "font-bold text-[#c27b35]",
-  ABSENT: "font-bold text-[#b94d4d]",
-  LATE: "font-bold text-[#9a6729]",
-};
+import type { LeaveKind } from "@prisma/client";
 const followUpStatuses = new Set<keyof typeof attendanceLabel>(["LEAVE", "ABSENT", "LATE"]);
 
 export type ScheduleClassOption = {
@@ -33,6 +31,83 @@ export type ScheduleClassOption = {
 };
 
 export type ScheduleTeacherOption = { id: string; name: string; linked: boolean };
+
+function ClassCombobox({
+  classes,
+  value,
+  onChange,
+}: {
+  classes: ScheduleClassOption[];
+  value: string;
+  onChange: (classId: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [listOpen, setListOpen] = useState(true);
+  const selected = classes.find((item) => item.id === value) ?? null;
+  const matches = useMemo(() => {
+    const text = query.trim().toLowerCase();
+    if (!text) return classes;
+    return classes.filter((item) => [item.name, item.courseName, item.teacherName].some((part) => part.toLowerCase().includes(text)));
+  }, [classes, query]);
+
+  return (
+    <div className="overflow-hidden rounded-[10px] border border-[var(--line)] bg-white">
+      <input type="hidden" name="classGroupId" value={value} />
+      <div className="flex items-center justify-between gap-3 border-b border-[var(--line)] bg-[#f7faf8] px-3 py-2.5">
+        <span className={`min-w-0 truncate text-sm font-semibold ${selected ? "text-[#182a35]" : "text-[var(--muted)]"}`}>
+          {selected ? selected.name : "请选择班级"}
+        </span>
+        <button
+          type="button"
+          aria-expanded={listOpen}
+          aria-label={listOpen ? "隐藏班级名单" : "显示班级名单"}
+          onClick={() => setListOpen((open) => !open)}
+          className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-[#51656a] hover:bg-white"
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" className={`transition-transform ${listOpen ? "" : "-rotate-90"}`}>
+            <path d="M3 5.2 7 9l4-3.8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+      </div>
+      <div className="border-b border-[var(--line)] px-2 py-2">
+        <input
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setListOpen(true);
+          }}
+          placeholder="搜索班级、课程或教师"
+          autoComplete="off"
+          aria-label="搜索班级"
+          className="w-full rounded-lg border border-[var(--line)] bg-white px-3 py-2 text-sm font-medium outline-none focus:border-[var(--teal)]"
+        />
+      </div>
+      {listOpen ? (
+        <ul role="listbox" aria-label="班级列表" className="max-h-52 overflow-y-auto">
+          {matches.length === 0 ? (
+            <li className="px-3 py-3 text-xs font-medium text-[var(--muted)]">{classes.length === 0 ? "没有可排课的班级。" : "没有匹配的班级"}</li>
+          ) : matches.map((item) => {
+            const chosen = item.id === value;
+            return (
+              <li key={item.id}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={chosen}
+                  onClick={() => onChange(item.id)}
+                  className={`flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left ${chosen ? "bg-[#e4f2ee] text-[#146b62]" : "text-[#182a35] hover:bg-[#f7faf8]"}`}
+                >
+                  <span className="min-w-0 truncate text-sm font-semibold">{item.name}</span>
+                  <span className={`shrink-0 text-[11px] font-medium ${chosen ? "text-[#146b62]" : "text-[#8a9894]"}`}>{item.courseName} · {item.teacherName}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
 
 export type ScheduleLesson = {
   id: string;
@@ -49,6 +124,7 @@ export type ScheduleLesson = {
   teacherId: string;
   teacherName: string;
   location: string | null;
+  classroomId: string | null;
   status: keyof typeof lessonStatusLabel;
   students: {
     id: string;
@@ -57,7 +133,11 @@ export type ScheduleLesson = {
     age: number | null;
     parentContact: string;
     attendanceStatus: keyof typeof attendanceLabel;
+    leaveKind?: LeaveKind | null;
     attendanceNote: string | null;
+    lessonStudentId: string;
+    seat: keyof typeof seatLabel;
+    makeupText: string | null;
   }[];
 };
 
@@ -77,6 +157,10 @@ export function ScheduleBoard({
   lessons,
   classes,
   teachers,
+  rooms,
+  roomId = "",
+  openLessonId = "",
+  openFormKey = "",
 }: {
   view: "day" | "week";
   pendingRecords?: boolean;
@@ -93,8 +177,14 @@ export function ScheduleBoard({
   lessons: ScheduleLesson[];
   classes: ScheduleClassOption[];
   teachers: ScheduleTeacherOption[];
+  rooms: { id: string; name: string; capacity: number; available: boolean }[];
+  roomId?: string;
+  openLessonId?: string;
+  openFormKey?: string;
 }) {
   const router = useRouter();
+  const t = usePick();
+  const dateFlash = useDateFlash(view === "day" ? date : `${weekStart}`);
   const [pending, startTransition] = useTransition();
   const [creating, setCreating] = useState(false);
   const [recurring, setRecurring] = useState(false);
@@ -105,6 +195,14 @@ export function ScheduleBoard({
   const [createRosterIds, setCreateRosterIds] = useState<string[]>([]);
   const [shownLessons, setShownLessons] = useState(lessons);
   const [viewing, setViewing] = useState<ScheduleLesson | null>(null);
+  const openedLesson = useRef("");
+  useEffect(() => {
+    if (!openLessonId || openedLesson.current === openLessonId) return;
+    const lesson = lessons.find((item) => item.id === openLessonId);
+    if (!lesson) return;
+    openedLesson.current = openLessonId;
+    setViewing(lesson);
+  }, [openLessonId, lessons]);
   const [removing, setRemoving] = useState<{ id: string; name: string; marked: boolean } | null>(null);
   const [attendanceDetail, setAttendanceDetail] = useState<ScheduleLesson["students"][number] | null>(null);
   const [cancelling, setCancelling] = useState<ScheduleLesson | null>(null);
@@ -114,9 +212,17 @@ export function ScheduleBoard({
   const [warning, setWarning] = useState("");
   const [conflictWarning, setConflictWarning] = useState("");
   const [teacherWarning, setTeacherWarning] = useState("");
+  const [roomWarning, setRoomWarning] = useState("");
+  const [recurringCapacity, setRecurringCapacity] = useState(false);
+  const [timeWarning, setTimeWarning] = useState("");
+  const [chargeConfirm, setChargeConfirm] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [slotMinutes, setSlotMinutes] = useState<30 | 45 | 60>(60);
 
+  function keep(href: string) {
+    if (!roomId) return href;
+    return `${href}${href.includes("?") ? "&" : "?"}room=${encodeURIComponent(roomId)}`;
+  }
   const selectedClass = useMemo(() => classes.find((item) => item.id === classId) ?? null, [classes, classId]);
   const recurringClass = useMemo(() => classes.find((item) => item.id === recurringClassId) ?? null, [classes, recurringClassId]);
   useEffect(() => {
@@ -138,6 +244,7 @@ export function ScheduleBoard({
     setRosterIds([]);
     setRecurringErrors({});
     setRecurringMessage("");
+    setRecurringCapacity(false);
     setRecurring(true);
   }
 
@@ -149,10 +256,12 @@ export function ScheduleBoard({
     startTransition(async () => {
       const result = await createRecurringLessons(formData);
       if (!result.ok || result.created === 0) {
+        setRecurringCapacity(Boolean(result.needsCapacityConfirm));
         setRecurringMessage(result.message ?? "");
         setRecurringErrors(result.fieldErrors ?? {});
         return;
       }
+      setRecurringCapacity(false);
       setRecurring(false);
       setWarning(result.message ?? `已生成 ${result.created} 节课。`);
       if (result.firstDate) router.push(`/owner/schedule?date=${result.firstDate}`);
@@ -170,6 +279,14 @@ export function ScheduleBoard({
     setConflictWarning("");
     setCreating(true);
   }
+
+  useEffect(() => {
+    if (!openFormKey) return;
+    if (openFormKey.startsWith("recurring")) openRecurring();
+    else openCreate();
+    // 从助教带入时打开一次。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openFormKey]);
 
   function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -208,6 +325,48 @@ export function ScheduleBoard({
       setTeacherWarning("");
       setViewing(null);
       setWarning(result.warning ?? "");
+      router.refresh();
+    });
+  }
+
+  function saveRoom(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!viewing) return;
+    const formData = new FormData(event.currentTarget);
+    setMessage("");
+    setFieldErrors({});
+    startTransition(async () => {
+      const result = await changeLessonClassroom(viewing.id, formData);
+      if (!result.ok) {
+        setMessage(result.message ?? "");
+        setFieldErrors(result.fieldErrors ?? {});
+        setRoomWarning(result.warning ?? "");
+        return;
+      }
+      setRoomWarning("");
+      setViewing(null);
+      setWarning(result.message ?? "");
+      router.refresh();
+    });
+  }
+
+  function saveTime(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!viewing) return;
+    const formData = new FormData(event.currentTarget);
+    setMessage("");
+    startTransition(async () => {
+      const result = await rescheduleLesson(viewing.id, formData);
+      if (!result.ok) {
+        setChargeConfirm(Boolean(result.needsChargeConfirm));
+        setTimeWarning(result.warning ?? "");
+        setMessage(result.message ?? "");
+        return;
+      }
+      setChargeConfirm(false);
+      setTimeWarning("");
+      setViewing(null);
+      setWarning(result.message ?? "");
       router.refresh();
     });
   }
@@ -252,13 +411,13 @@ export function ScheduleBoard({
     <section>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-[28px] font-semibold tracking-tight">排课 / 课表</h1>
-          <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">按日期或按周查看课次。周视图只保留本周和前两周，更早的课次在历史课表里。</p>
+          <h1 className="text-[28px] font-semibold tracking-tight">{t("排课 / 课表", "Schedule")}</h1>
+          <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">{t("按日期或按周查看课次。周视图只保留本周和前两周，更早的课次在历史课表里。", "View lessons by day or week. The week view keeps this week and the two before it. Older lessons stay in history.")}</p>
           <p className="mt-3 flex flex-wrap items-center gap-2 text-xs">
             <span className="rounded-full bg-[var(--teal-2)] px-2.5 py-1 font-bold text-[var(--teal)]">
               {next7Days ? "查看未来 7 天课次" : pendingRecords ? "当前正在查看：待填写记录的课次" : `当前正在查看：${view === "day" ? `${dateLabel} 的单日列表` : `${weekDays[0]?.dateLabel ?? ""} 至 ${weekDays[6]?.dateLabel ?? ""} 的周视图`}`}
             </span>
-            {next7Days || pendingRecords ? <Link href={`/owner/schedule?view=day&date=${date}`} className="font-bold text-[var(--teal)]">重置</Link> : null}
+            {next7Days || pendingRecords ? <Link href={keep(`/owner/schedule?view=day&date=${date}`)} className="font-bold text-[var(--teal)]">重置</Link> : null}
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -271,35 +430,57 @@ export function ScheduleBoard({
         </div>
       </div>
 
-      {warning ? <p className="mt-4 rounded-xl bg-[#fff2df] px-4 py-3 text-xs leading-6 text-[#9a6729]">{warning}</p> : null}
+      {warning ? <p className="mt-4 whitespace-pre-line rounded-xl bg-[#fff2df] px-4 py-3 text-xs leading-6 text-[#9a6729]">{warning}</p> : null}
 
       <div className="mt-6 flex flex-wrap items-center gap-2">
         <div className="flex rounded-[10px] border border-[var(--line)] bg-white p-1">
-          <Link href={next7Days ? "/owner/schedule?range=next7days" : spanDates ? "/owner/schedule?status=待填写" : pendingRecords ? `/owner/schedule?view=day&date=${date}&status=待填写` : `/owner/schedule?date=${date}`} className={`rounded-lg px-3 py-1.5 text-xs font-bold ${view === "day" ? "bg-[var(--teal)] text-white" : "text-[#385058]"}`}>单日列表</Link>
-          <Link href={`/owner/schedule?view=week&week=${weekStart}&date=${date}`} className={`rounded-lg px-3 py-1.5 text-xs font-bold ${view === "week" ? "bg-[var(--teal)] text-white" : "text-[#385058]"}`}>周视图</Link>
+          <Link href={keep(next7Days ? "/owner/schedule?range=next7days" : spanDates ? "/owner/schedule?status=待填写" : pendingRecords ? `/owner/schedule?view=day&date=${date}&status=待填写` : `/owner/schedule?date=${date}`)} className={`rounded-lg px-3 py-1.5 text-xs font-bold ${view === "day" ? "bg-[var(--teal)] text-white" : "text-[#385058]"}`}>单日列表</Link>
+          <Link href={keep(`/owner/schedule?view=week&week=${weekStart}&date=${date}`)} className={`rounded-lg px-3 py-1.5 text-xs font-bold ${view === "week" ? "bg-[var(--teal)] text-white" : "text-[#385058]"}`}>周视图</Link>
         </div>
+        <label className="flex items-center gap-2 text-xs font-bold text-[#385058]">
+          按教室查看
+          <select
+            value={roomId}
+            onChange={(event) => {
+              const next = event.target.value;
+              const path = view === "week"
+                ? `/owner/schedule?view=week&week=${weekStart}&date=${date}`
+                : `/owner/schedule?date=${date}`;
+              router.push(next ? `${path}&room=${encodeURIComponent(next)}` : path);
+            }}
+            className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold outline-none focus:border-[var(--teal)]"
+          >
+            <option value="">全部教室</option>
+            {rooms.map((room) => <option key={room.id} value={room.id}>{room.name}{room.available ? "" : " · 停用"} · {room.capacity}人</option>)}
+          </select>
+        </label>
         <Link href="/owner/schedule/history" className="rounded-[10px] border border-[var(--teal)] bg-white px-3 py-2 text-xs font-bold text-[var(--teal)]">查看历史课表</Link>
         {view === "day" && !spanDates && !next7Days ? (
           <>
-            <Link href={`/owner/schedule?view=day&date=${previousDate}${pendingRecords ? "&status=待填写" : ""}`} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold">前一天</Link>
+            <DayStep href={keep(`/owner/schedule?view=day&date=${previousDate}${pendingRecords ? "&status=待填写" : ""}`)} direction="back" label="往前一天" />
+            <Link href={keep(`/owner/schedule?view=day&date=${previousDate}${pendingRecords ? "&status=待填写" : ""}`)} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold transition active:-translate-x-1 active:scale-95 active:border-[var(--teal)] active:bg-[var(--teal)] active:text-white">前一天</Link>
             <form action="/owner/schedule" className="flex items-center gap-2">
               <input type="hidden" name="view" value="day" />
+              {roomId ? <input type="hidden" name="room" value={roomId} /> : null}
               {pendingRecords ? <input type="hidden" name="status" value="待填写" /> : null}
-              <DateField name="date" defaultValue={date} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold" />
+              <DateField key={date} name="date" defaultValue={date} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold" />
               <button className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold">查看</button>
             </form>
-            <Link href={`/owner/schedule?view=day&date=${nextDate}${pendingRecords ? "&status=待填写" : ""}`} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold">后一天</Link>
-            <span className="text-xs text-[var(--muted)]">{dateLabel}</span>
+            <Link href={keep(`/owner/schedule?view=day&date=${nextDate}${pendingRecords ? "&status=待填写" : ""}`)} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold transition active:translate-x-1 active:scale-95 active:border-[var(--teal)] active:bg-[var(--teal)] active:text-white">后一天</Link>
+            <DayStep href={keep(`/owner/schedule?view=day&date=${nextDate}${pendingRecords ? "&status=待填写" : ""}`)} direction="forward" label="往后一天" />
+            <span className={dateFlashClass(dateFlash)}>{dateLabel}</span>
           </>
         ) : view === "week" ? (
           <>
+            {previousWeek ? <DayStep href={keep(`/owner/schedule?view=week&week=${previousWeek}&date=${date}`)} direction="back" label="上一周" /> : null}
             {previousWeek ? (
-              <Link href={`/owner/schedule?view=week&week=${previousWeek}&date=${date}`} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold">上一周 ←</Link>
+              <Link href={keep(`/owner/schedule?view=week&week=${previousWeek}&date=${date}`)} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold transition active:-translate-x-1 active:scale-95 active:border-[var(--teal)] active:bg-[var(--teal)] active:text-white">上一周</Link>
             ) : (
-              <span className="rounded-[10px] border border-[var(--line)] bg-[#f7faf8] px-3 py-2 text-xs font-bold text-[var(--muted)]">上一周 ←</span>
+              <span className="rounded-[10px] border border-[var(--line)] bg-[#f7faf8] px-3 py-2 text-xs font-bold text-[var(--muted)]">上一周</span>
             )}
-            <Link href={`/owner/schedule?view=week&week=${nextWeek}&date=${date}`} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold">下一周 →</Link>
-            <span className="text-xs text-[var(--muted)]">{weekDays[0]?.dateLabel} – {weekDays[6]?.dateLabel}</span>
+            <Link href={keep(`/owner/schedule?view=week&week=${nextWeek}&date=${date}`)} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold transition active:translate-x-1 active:scale-95 active:border-[var(--teal)] active:bg-[var(--teal)] active:text-white">下一周</Link>
+            <DayStep href={keep(`/owner/schedule?view=week&week=${nextWeek}&date=${date}`)} direction="forward" label="下一周" />
+            <span className={dateFlashClass(dateFlash)}>{weekDays[0]?.dateLabel} – {weekDays[6]?.dateLabel}</span>
             <label className="flex items-center gap-2 text-xs font-bold text-[#385058]">
               网格刻度
               <select
@@ -360,24 +541,18 @@ export function ScheduleBoard({
         <Modal title="周期排课" onClose={() => setRecurring(false)}>
           <form onSubmit={saveRecurring} className="px-5 py-5">
             <div className="grid gap-3">
-              <label className="grid gap-1.5 text-xs font-bold">
-                班级 <span className="font-medium text-[#9a6729]">必填</span>
-                <select
-                  name="classGroupId"
+              <div className="grid gap-1.5 text-xs font-bold">
+                <span>班级 <span className="font-medium text-[#9a6729]">必填</span></span>
+                <ClassCombobox
+                  classes={classes}
                   value={recurringClassId}
-                  onChange={(event) => {
-                    setRecurringClassId(event.target.value);
+                  onChange={(id) => {
+                    setRecurringClassId(id);
                     setRosterIds([]);
                   }}
-                  className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]"
-                >
-                  <option value="">请选择班级</option>
-                  {classes.map((item) => (
-                    <option key={item.id} value={item.id}>{item.name}</option>
-                  ))}
-                </select>
+                />
                 <FieldError message={recurringErrors.classGroupId} />
-              </label>
+              </div>
               <p className="rounded-xl bg-[#f7faf8] px-3 py-2 text-xs leading-6 text-[var(--muted)]">
                 课程：{recurringClass?.courseName ?? "选择班级后自动带出"}
                 <br />
@@ -426,20 +601,29 @@ export function ScheduleBoard({
                   <span className="mt-1 block text-[var(--muted)]">法定节假日暂时不会自动避开。勾选后，周六和周日不会生成课次。以后可以接入节假日日历。</span>
                 </span>
               </label>
-              <TextField label="地点" name="location" placeholder="例如 A201，每一节都使用这个地点" error={recurringErrors.location} />
+              <label className="grid gap-1.5 text-xs font-bold">
+                教室 <span className="font-medium text-[#9a6729]">必填</span>
+                <select name="classroomId" defaultValue="" className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]">
+                  <option value="">请选择教室</option>
+                  {rooms.filter((room) => room.available).map((room) => <option key={room.id} value={room.id}>{room.name} · 可坐 {room.capacity} 人</option>)}
+                </select>
+                <FieldError message={recurringErrors.classroomId} />
+                {rooms.every((room) => !room.available) ? <span className="font-medium text-[#9a6729]">还没有可用教室。请先到教室管理添加。</span> : null}
+              </label>
               <LessonRosterPicker
                 classGroupId={recurringClassId}
                 selectedIds={rosterIds}
                 onChange={setRosterIds}
                 error={recurringErrors.students}
               />
-              <p className="text-xs leading-6 text-[var(--muted)]">同一班级或同一教师已经有重叠时间时，那一天会跳过，不会覆盖已有课次。</p>
+              <p className="text-xs leading-6 text-[var(--muted)]">同一教师、同一个班、同一教室或同一名学生已经有重叠时间时，那一天会跳过，并说明冲突原因。人数多于教室可坐人数时，确认后仍会生成。</p>
+              {recurringCapacity ? <input type="hidden" name="acknowledgeCapacity" value="1" /> : null}
             </div>
-            {recurringMessage ? <p className="mt-3 text-xs leading-6 text-[#9a6729]">{recurringMessage}</p> : null}
+            {recurringMessage ? <p className="mt-3 whitespace-pre-line text-xs leading-6 text-[#9a6729]">{recurringMessage}</p> : null}
             <div className="mt-5 flex justify-end gap-2">
               <button type="button" onClick={() => setRecurring(false)} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold">取消</button>
               <button disabled={pending || classes.length === 0} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white disabled:opacity-60">
-                {pending ? "正在生成…" : "生成课次"}
+                {pending ? "正在生成…" : recurringCapacity ? "确认并生成" : "生成课次"}
               </button>
             </div>
           </form>
@@ -459,6 +643,7 @@ export function ScheduleBoard({
                     const next = classes.find((item) => item.id === event.target.value);
                     setClassId(event.target.value);
                     setCreateRosterIds([]);
+                    setConflictWarning("");
                     if (next) setTeacherId(next.teacherId);
                   }}
                   className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]"
@@ -495,18 +680,25 @@ export function ScheduleBoard({
                   <FieldError message={fieldErrors.endAt} />
                 </label>
               </div>
-              <TextField label="地点" name="location" placeholder="例如 A201" error={fieldErrors.location} />
+              <label className="grid gap-1.5 text-xs font-bold">
+                教室 <span className="font-medium text-[#9a6729]">必填</span>
+                <select name="classroomId" defaultValue="" onChange={() => setConflictWarning("")} className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]">
+                  <option value="">请选择教室</option>
+                  {rooms.filter((room) => room.available).map((room) => <option key={room.id} value={room.id}>{room.name} · 可坐 {room.capacity} 人</option>)}
+                </select>
+                <FieldError message={fieldErrors.classroomId} />
+              </label>
               <LessonRosterPicker
                 classGroupId={classId}
                 selectedIds={createRosterIds}
-                onChange={setCreateRosterIds}
+                onChange={(ids) => { setCreateRosterIds(ids); setConflictWarning(""); }}
                 error={fieldErrors.students}
               />
             </div>
             {conflictWarning ? (
               <>
                 <input type="hidden" name="acknowledgeConflict" value="1" />
-                <p className="mt-3 rounded-xl bg-[#fff2df] px-3 py-3 text-xs leading-6 text-[#9a6729]">{conflictWarning}</p>
+                <p className="mt-3 whitespace-pre-line rounded-xl bg-[#fff2df] px-3 py-3 text-xs leading-6 text-[#9a6729]">{conflictWarning}</p>
               </>
             ) : null}
             {message ? <p className="mt-3 text-xs text-[#b94d4d]">{message}</p> : null}
@@ -533,9 +725,13 @@ export function ScheduleBoard({
                   const unusual = followUpStatuses.has(student.attendanceStatus);
                   return (
                   <li key={student.id} className="flex items-center justify-between gap-3 rounded-xl bg-[#f7faf8] px-3 py-2">
-                    {unusual ? (
-                      <button type="button" className="font-bold text-[var(--teal)]" onClick={() => setAttendanceDetail(student)}>{student.name}</button>
-                    ) : <span className="font-bold">{student.name}</span>}
+                    <span className="flex min-w-0 flex-wrap items-center gap-2">
+                      {unusual ? (
+                        <button type="button" className="font-bold text-[var(--teal)]" onClick={() => setAttendanceDetail(student)}>{student.name}</button>
+                      ) : <span className="font-bold">{student.name}</span>}
+                      <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${student.seat === "TRIAL" ? "bg-[#e7eefb] text-[#24548f]" : student.seat === "CONVERTED" ? "bg-[#edf5f1] text-[#34725d]" : student.seat === "GUEST" ? "bg-[#fff2df] text-[#9a6729]" : "bg-[#eef1ee] text-[#51656a]"}`}>{seatLabel[student.seat]}</span>
+                      {student.makeupText ? <span className="text-[11px] font-bold text-[#9a6729]">{student.makeupText}</span> : null}
+                    </span>
                     <span className="flex items-center gap-3 text-xs">
                       <span className="relative" onClick={() => setMessage("考勤由授课教师记录，负责人无权修改。")}>
                         <select value={student.attendanceStatus} disabled className="pointer-events-none rounded-[10px] border border-[var(--line)] bg-[#f4f6f5] px-2 py-1 text-xs text-[#74838b]">
@@ -545,7 +741,10 @@ export function ScheduleBoard({
                         </select>
                       </span>
                       {unusual ? (
-                        <button type="button" className={attendanceTone[student.attendanceStatus]} onClick={() => setAttendanceDetail(student)}>{attendanceLabel[student.attendanceStatus]}</button>
+                        <button type="button" className={attendanceDisplayTone(student.attendanceStatus, student.leaveKind)} onClick={() => setAttendanceDetail(student)}>{attendanceDisplayLabel(student.attendanceStatus, student.leaveKind)}</button>
+                      ) : null}
+                      {student.seat === "TRIAL" && viewing.status !== "CANCELLED" ? (
+                        <Link href={`/owner/billing?enroll=1&studentId=${student.id}&courseId=${viewing.courseId}&lessonStudentId=${student.lessonStudentId}`} className="font-bold text-[var(--teal)]">转为报名</Link>
                       ) : null}
                       {viewing.status !== "CANCELLED" ? (
                         <button type="button" className="font-bold text-[#9a6729]" onClick={() => setRemoving({ id: student.id, name: student.name, marked: student.attendanceStatus !== "NOT_MARKED" })}>移出</button>
@@ -575,12 +774,66 @@ export function ScheduleBoard({
                 {teacherWarning ? (
                   <>
                     <input type="hidden" name="acknowledgeConflict" value="1" />
-                    <p className="rounded-xl bg-[#fff2df] px-3 py-3 text-xs leading-6 text-[#9a6729]">{teacherWarning}</p>
+                    <p className="whitespace-pre-line rounded-xl bg-[#fff2df] px-3 py-3 text-xs leading-6 text-[#9a6729]">{teacherWarning}</p>
                   </>
                 ) : null}
                 <div className="flex justify-end">
                   <button disabled={pending} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold disabled:opacity-60">
                     {pending ? "正在保存…" : teacherWarning ? "仍然更换" : "保存教师"}
+                  </button>
+                </div>
+              </form>
+            ) : null}
+            {viewing.status !== "CANCELLED" ? (
+              <form key={`${viewing.id}-room`} onSubmit={saveRoom} className="grid gap-2 rounded-xl border border-[var(--line)] p-3">
+                <label className="grid gap-1.5 text-xs font-bold">
+                  更换教室
+                  <select
+                    name="classroomId"
+                    defaultValue={viewing.classroomId ?? ""}
+                    onChange={() => setRoomWarning("")}
+                    className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-sm font-medium outline-none focus:border-[var(--teal)]"
+                  >
+                    <option value="">请选择教室</option>
+                    {rooms.filter((room) => room.available || room.id === viewing.classroomId).map((room) => (
+                      <option key={room.id} value={room.id}>{room.name} · 可坐 {room.capacity} 人{room.available ? "" : " · 停用"}</option>
+                    ))}
+                  </select>
+                  <FieldError message={fieldErrors.classroomId} />
+                </label>
+                {roomWarning ? (
+                  <>
+                    <input type="hidden" name="acknowledgeConflict" value="1" />
+                    <p className="whitespace-pre-line rounded-xl bg-[#fff2df] px-3 py-3 text-xs leading-6 text-[#9a6729]">{roomWarning}</p>
+                  </>
+                ) : null}
+                <div className="flex justify-end">
+                  <button disabled={pending} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold disabled:opacity-60">
+                    {pending ? "正在保存…" : roomWarning ? "确认更换" : "保存教室"}
+                  </button>
+                </div>
+              </form>
+            ) : null}
+            {viewing.status !== "CANCELLED" ? (
+              <form key={`${viewing.id}-time`} onSubmit={saveTime} className="grid gap-2 rounded-xl border border-[var(--line)] p-3">
+                <p className="text-xs font-bold">修改上课时间</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <label className="grid gap-1.5 text-xs font-bold">
+                    开始
+                    <DateTimeField name="startAt" defaultValue={`${viewing.dateKey}T${viewing.startLabel}`} required />
+                  </label>
+                  <label className="grid gap-1.5 text-xs font-bold">
+                    结束
+                    <DateTimeField name="endAt" defaultValue={`${viewing.dateKey}T${viewing.endLabel}`} required />
+                  </label>
+                </div>
+                {chargeConfirm ? <input type="hidden" name="confirmCharged" value="1" /> : null}
+                {timeWarning ? <input type="hidden" name="acknowledgeConflict" value="1" /> : null}
+                {chargeConfirm ? <p className="rounded-xl bg-[#fff2df] px-3 py-3 text-xs leading-6 text-[#9a6729]">这节课已有学生扣过课时。改时间不会退回已扣课时。再点一次才会保存。</p> : null}
+                {timeWarning ? <p className="whitespace-pre-line rounded-xl bg-[#fff2df] px-3 py-3 text-xs leading-6 text-[#9a6729]">{timeWarning}</p> : null}
+                <div className="flex justify-end">
+                  <button disabled={pending} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold disabled:opacity-60">
+                    {pending ? "正在保存…" : chargeConfirm || timeWarning ? "确认修改" : "保存时间"}
                   </button>
                 </div>
               </form>
@@ -618,7 +871,7 @@ export function ScheduleBoard({
             <div><div className="text-xs font-bold">学生姓名</div><p className="mt-1">{attendanceDetail.name}</p></div>
             <div><div className="text-xs font-bold">年级</div><p className="mt-1 text-[var(--muted)]">{attendanceDetail.grade ?? "未填写"}</p></div>
             <div><div className="text-xs font-bold">年龄</div><p className="mt-1 text-[var(--muted)]">{attendanceDetail.age ? `${attendanceDetail.age}岁` : "未填写"}</p></div>
-            <div><div className="text-xs font-bold">考勤状态</div><p className={`mt-1 ${attendanceTone[attendanceDetail.attendanceStatus] ?? ""}`}>{attendanceLabel[attendanceDetail.attendanceStatus]}</p></div>
+            <div><div className="text-xs font-bold">考勤状态</div><p className={`mt-1 ${attendanceDisplayTone(attendanceDetail.attendanceStatus, attendanceDetail.leaveKind)}`}>{attendanceDisplayLabel(attendanceDetail.attendanceStatus, attendanceDetail.leaveKind)}</p></div>
             <div><div className="text-xs font-bold">备注原因</div><p className="mt-1 leading-6 text-[var(--muted)]">{attendanceDetail.attendanceNote?.trim() || "老师没有填写备注。"}</p></div>
             <div><div className="text-xs font-bold">家长联系方式</div><p className="mt-1 leading-6 text-[var(--muted)]">{attendanceDetail.parentContact}</p></div>
             <div className="flex justify-end">

@@ -1,8 +1,7 @@
 import { randomUUID } from "crypto";
-import { AttendanceStatus, Prisma, PrismaClient } from "@prisma/client";
+import { AttendanceStatus, LeaveKind, Prisma, PrismaClient } from "@prisma/client";
+import { needsBillingFollowUp } from "@/lib/billing-list";
 import { shanghaiDateKey } from "@/lib/datetime";
-
-export const lowHourThreshold = 8;
 
 export class CourseHourError extends Error {
   constructor(message: string) {
@@ -42,28 +41,40 @@ export async function syncAttendanceCharge(
     courseId: string;
     courseName: string;
     shouldCharge: boolean;
+    seat?: "ENROLLED" | "GUEST" | "TRIAL" | "CONVERTED";
     billingType?: "PER_LESSON" | "PER_PERIOD";
     attendanceStatus: AttendanceStatus;
     attendanceNote: string | null;
+    leaveKind?: LeaveKind | null;
   },
 ) {
   const note = input.attendanceNote;
-  const shouldCharge = input.billingType === "PER_PERIOD" ? false : input.shouldCharge;
+  // 老师改成非请假时清掉「家长已请假」标记，但保留 parentLeaveNote，方便家长看出勤历史。
+  const clearParentLeave = input.attendanceStatus === "LEAVE" ? {} : { parentLeaveAt: null };
+  const leaveKind: LeaveKind | null =
+    input.attendanceStatus === "LEAVE" ? input.leaveKind ?? "PERSONAL" : null;
+  const attendanceFields = {
+    attendanceStatus: input.attendanceStatus,
+    attendanceNote: note,
+    leaveKind,
+    ...clearParentLeave,
+  };
+  const trialSeat = input.seat === "TRIAL" || input.seat === "CONVERTED";
+  const shouldCharge = input.billingType === "PER_PERIOD" || trialSeat ? false : input.shouldCharge;
   const chargeAction = input.attendanceStatus === "ABSENT" ? "缺勤扣减 1 课时" : input.attendanceStatus === "LATE" ? "迟到扣减 1 课时" : "出勤扣减 1 课时";
   if (shouldCharge) {
     const marked = await tx.lessonStudent.updateMany({
       where: { id: input.lessonStudentId, organizationId: input.organizationId, studentId: input.studentId, hoursCharged: false },
       data: {
         hoursCharged: true,
-        attendanceStatus: input.attendanceStatus,
-        attendanceNote: note,
+        ...attendanceFields,
         lastAction: chargeAction,
       },
     });
     if (marked.count === 0) {
       const kept = await tx.lessonStudent.updateMany({
         where: { id: input.lessonStudentId, organizationId: input.organizationId, studentId: input.studentId, hoursCharged: true },
-        data: { attendanceStatus: input.attendanceStatus, attendanceNote: note, lastAction: "更新考勤" },
+        data: { ...attendanceFields, lastAction: "更新考勤" },
       });
       if (kept.count !== 1) throw new CourseHourError("这节课的名单已变化，请刷新后再试。");
       return "unchanged" as const;
@@ -82,8 +93,7 @@ export async function syncAttendanceCharge(
     where: { id: input.lessonStudentId, organizationId: input.organizationId, studentId: input.studentId, hoursCharged: true },
     data: {
       hoursCharged: false,
-      attendanceStatus: input.attendanceStatus,
-      attendanceNote: note,
+      ...attendanceFields,
       lastAction: "撤销课时扣减",
     },
   });
@@ -98,7 +108,7 @@ export async function syncAttendanceCharge(
   }
   const kept = await tx.lessonStudent.updateMany({
     where: { id: input.lessonStudentId, organizationId: input.organizationId, studentId: input.studentId, hoursCharged: false },
-    data: { attendanceStatus: input.attendanceStatus, attendanceNote: note, lastAction: "更新考勤" },
+    data: { ...attendanceFields, lastAction: "更新考勤" },
   });
   if (kept.count !== 1) throw new CourseHourError("这节课的名单已变化，请刷新后再试。");
   return "unchanged" as const;
@@ -169,7 +179,14 @@ export async function findRenewingStudentIds(db: PrismaClient | Prisma.Transacti
     const key = `${row.studentId}:${row.courseId}`;
     if (seenLessons.has(key)) continue;
     seenLessons.add(key);
-    if ((remaining.get(key) ?? 0) < lowHourThreshold) ids.add(row.studentId);
+    const hours = remaining.get(key) ?? 0;
+    if (needsBillingFollowUp({
+      enrolled: true,
+      billingType: "PER_LESSON",
+      remainingHours: hours,
+      periodStatus: null,
+      validUntil: null,
+    }, today)) ids.add(row.studentId);
   }
 
   const windows = new Map<string, { studentId: string; ranges: { start: string; end: string }[] }>();
@@ -182,7 +199,14 @@ export async function findRenewingStudentIds(db: PrismaClient | Prisma.Transacti
     windows.set(key, current);
   }
   for (const item of windows.values()) {
-    if (periodNeedsRenewal(periodValidity(item.ranges, today).status)) ids.add(item.studentId);
+    const period = periodValidity(item.ranges, today);
+    if (needsBillingFollowUp({
+      enrolled: true,
+      billingType: "PER_PERIOD",
+      remainingHours: null,
+      periodStatus: period.status,
+      validUntil: period.end === "—" ? null : period.end,
+    }, today)) ids.add(item.studentId);
   }
   return ids;
 }

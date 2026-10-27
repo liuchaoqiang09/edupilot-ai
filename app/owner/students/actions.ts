@@ -8,9 +8,9 @@ import { calendarDateKey, canDeactivateEnrollment, periodValidity } from "@/lib/
 import { shanghaiDateKey } from "@/lib/datetime";
 import { cellAt, decodeCsvBytes, headerMap, parseCsv } from "@/lib/student-import";
 import { prisma } from "@/lib/prisma";
-import { parseAge } from "@/lib/student-profile";
+import { parseAge, parseMainlandPhone } from "@/lib/student-profile";
 
-export type FieldErrors = Partial<Record<"name" | "studentNo" | "grade" | "age" | "guardianName" | "contactNote", string>>;
+export type FieldErrors = Partial<Record<"name" | "studentNo" | "grade" | "age" | "guardianName" | "guardianPhone" | "contactNote", string>>;
 
 export type ActionResult = {
   ok: boolean;
@@ -38,6 +38,7 @@ function validateStudent(formData: FormData) {
   const grade = clean(formData.get("grade"));
   const parsedAge = parseAge(formData.get("age"));
   const guardianName = clean(formData.get("guardianName"));
+  const guardianPhone = parseMainlandPhone(clean(formData.get("guardianPhone")), false);
   const contactNote = clean(formData.get("contactNote"));
 
   if (!name) fieldErrors.name = "请填写学生姓名。";
@@ -48,6 +49,7 @@ function validateStudent(formData: FormData) {
   if (grade.length > 40) fieldErrors.grade = "年级不能超过 40 个字。";
   if (parsedAge.error) fieldErrors.age = parsedAge.error;
   if (guardianName.length > 40) fieldErrors.guardianName = "家长姓名不能超过 40 个字。";
+  if (guardianPhone.error) fieldErrors.guardianPhone = guardianPhone.error;
   if (contactNote.length > 200) fieldErrors.contactNote = "联系备注不能超过 200 个字。";
 
   return {
@@ -58,6 +60,7 @@ function validateStudent(formData: FormData) {
       grade: grade || null,
       age: parsedAge.age,
       guardianName: guardianName || null,
+      guardianPhone: guardianPhone.phone,
       contactNote: contactNote || null,
     },
   };
@@ -94,6 +97,7 @@ export async function createStudent(formData: FormData): Promise<ActionResult> {
         grade: data.grade,
         age: data.age,
         guardianName: data.guardianName,
+        guardianPhone: data.guardianPhone,
         contactNote: data.contactNote,
       },
     });
@@ -304,21 +308,38 @@ export async function deactivateStudent(studentId: string, courseId: string, rea
     select: {
       id: true,
       enrollments: {
-        where: { courseId },
-        select: { startDate: true, endDate: true, course: { select: { billingType: true } } },
+        select: { courseId: true, startDate: true, endDate: true, course: { select: { name: true, billingType: true } } },
       },
-      courseHourBalances: { where: { courseId }, select: { remainingHours: true } },
+      courseHourBalances: { select: { courseId: true, remainingHours: true } },
     },
   });
-  const enrollment = student?.enrollments[0];
-  if (!student || !enrollment) return { ok: false, message: "找不到这名在读学员的报名，或你无权停用。" };
-
-  const windows = student.enrollments.flatMap((row) => row.startDate && row.endDate ? [{ start: calendarDateKey(row.startDate), end: calendarDateKey(row.endDate) }] : []);
-  const period = enrollment.course.billingType === "PER_PERIOD" ? periodValidity(windows, shanghaiDateKey()) : null;
-  const remainingHours = student.courseHourBalances[0]?.remainingHours ?? 0;
-  if (!canDeactivateEnrollment({ billingType: enrollment.course.billingType, remainingHours, periodStatus: period?.status ?? null })) {
-    return { ok: false, message: "只有剩余课时为 0，或周期课程已过期时，才能停用这名学员。" };
+  if (!student || !student.enrollments.some((row) => row.courseId === courseId)) {
+    return { ok: false, message: "找不到这名在读学员的报名，或你无权停用。" };
   }
+
+  const today = shanghaiDateKey();
+  const byCourse = new Map<string, { name: string; billingType: "PER_LESSON" | "PER_PERIOD"; windows: { start: string; end: string }[] }>();
+  for (const row of student.enrollments) {
+    const current = byCourse.get(row.courseId) ?? { name: row.course.name, billingType: row.course.billingType, windows: [] };
+    if (row.startDate && row.endDate) current.windows.push({ start: calendarDateKey(row.startDate), end: calendarDateKey(row.endDate) });
+    byCourse.set(row.courseId, current);
+  }
+  const courseState = (id: string) => {
+    const course = byCourse.get(id);
+    if (!course) return null;
+    const period = course.billingType === "PER_PERIOD" ? periodValidity(course.windows, today) : null;
+    const remainingHours = course.billingType === "PER_LESSON"
+      ? student.courseHourBalances.find((item) => item.courseId === id)?.remainingHours ?? 0
+      : 0;
+    return {
+      name: course.name,
+      finished: canDeactivateEnrollment({ billingType: course.billingType, remainingHours, periodStatus: period?.status ?? null }),
+    };
+  };
+  const selected = courseState(courseId);
+  if (!selected?.finished) return { ok: false, message: "只有剩余课时为 0，或周期课程已过期时，才能停用这名学员。" };
+  const stillOpen = [...byCourse.keys()].filter((id) => id !== courseId && courseState(id)?.finished === false).map((id) => courseState(id)?.name).filter((name): name is string => Boolean(name));
+  if (stillOpen.length > 0) return { ok: false, message: `这名学员在「${stillOpen.join("、")}」还有课时或有效期，不能整人停用。` };
 
   const result = await prisma.student.updateMany({
     where: { id: student.id, organizationId: user.organizationId, status: "ACTIVE" },

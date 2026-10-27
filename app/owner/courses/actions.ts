@@ -143,7 +143,7 @@ export async function createClassGroup(formData: FormData): Promise<ActionResult
   return { ok: true };
 }
 
-export async function updateClassGroup(formData: FormData): Promise<ActionResult> {
+export async function updateClassGroup(formData: FormData): Promise<ActionResult & { needsCapacityConfirm?: boolean }> {
   const user = await requireRole("OWNER", "owner");
   const fieldErrors: FieldErrors = {};
   const id = clean(formData.get("id"));
@@ -165,7 +165,7 @@ export async function updateClassGroup(formData: FormData): Promise<ActionResult
 
   const existing = await prisma.classGroup.findFirst({
     where: { id, organizationId: user.organizationId, status: "ACTIVE" },
-    select: { id: true, teacherId: true },
+    select: { id: true, teacherId: true, capacity: true },
   });
   if (!existing) return { ok: false, message: "找不到这个班级，或你无权修改。" };
 
@@ -177,6 +177,21 @@ export async function updateClassGroup(formData: FormData): Promise<ActionResult
     if (!teacher) return { ok: false, fieldErrors: { teacherId: "只能选择本机构的在职教师。" } };
   }
 
+  if (capacity != null) {
+    const enrolled = await prisma.enrollment.findMany({
+      where: { organizationId: user.organizationId, classGroupId: existing.id, student: { status: "ACTIVE" } },
+      select: { studentId: true },
+    });
+    const count = new Set(enrolled.map((row) => row.studentId)).size;
+    if (count > capacity && formData.get("acknowledgeCapacityShrink") !== "1") {
+      return {
+        ok: false,
+        needsCapacityConfirm: true,
+        message: `当前在读 ${count} 人，容量改成 ${capacity} 后会显示超员，排队也不能再转入。再次保存才会改容量。`,
+      };
+    }
+  }
+
   const updated = await prisma.classGroup.updateMany({
     where: { id: existing.id, organizationId: user.organizationId, status: "ACTIVE" },
     data: { name, teacherId, capacity },
@@ -185,6 +200,7 @@ export async function updateClassGroup(formData: FormData): Promise<ActionResult
 
   revalidatePath("/owner/courses");
   revalidatePath("/owner/schedule");
+  revalidatePath("/owner/todos");
   return { ok: true };
 }
 

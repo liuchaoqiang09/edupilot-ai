@@ -91,8 +91,23 @@ export function redactStudentNames(text: string, names: string[], replacement = 
   return unique.reduce((result, name) => result.split(name).join(replacement), text);
 }
 
+/** Strip markup before any model call so injected tags cannot shape the prompt. */
+export function stripPromptMarkup(text: string) {
+  return text
+    .replace(/<\s*script[\s\S]*?>[\s\S]*?<\s*\/\s*script\s*>/gi, " ")
+    .replace(/<\s*style[\s\S]*?>[\s\S]*?<\s*\/\s*style\s*>/gi, " ")
+    .replace(/<\/?[a-zA-Z][^>]*>/g, " ")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function clip(value: string, placeholder: string, max = 2000) {
-  const text = value.trim();
+  const text = stripPromptMarkup(value).trim();
   return text ? text.slice(0, max) : placeholder;
 }
 
@@ -141,7 +156,8 @@ export function buildLessonAnalysisPrompt(input: {
   studentNames: string[];
 }) {
   const text = copy[input.language];
-  const redact = (value: string, max = 2000) => clip(redactStudentNames(value, input.studentNames, text.student), text.missing, max);
+  const redact = (value: string, max = 2000) =>
+    clip(redactStudentNames(stripPromptMarkup(value), input.studentNames, text.student), text.missing, max);
   const lines = [
     text.lead,
     `${text.fields[0]}：${redact(input.lessonContent)}`,

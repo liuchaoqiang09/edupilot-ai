@@ -1,9 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { FormEvent, useState, useTransition } from "react";
+import { FormEvent, useEffect, useState, useTransition } from "react";
 import { archiveClassGroup, archiveCourse, createClassGroup, createCourse, restoreClassGroup, restoreCourse, updateClassGroup, updateCourse, type FieldErrors } from "@/app/owner/courses/actions";
+import { ClassWaitlistButton, type WaitEntry, type WaitStudent } from "@/components/class-waitlist";
 import { FieldError, TextField } from "@/components/form-fields";
+import { usePick } from "@/components/locale-provider";
 import { Modal } from "@/components/modal";
 
 export type CourseOption = { id: string; name: string };
@@ -26,6 +28,11 @@ export type ClassRow = {
   teacherId: string;
   teacherName: string;
   capacity: number | null;
+  enrolledCount: number;
+  enrolledStudentIds: string[];
+  full: boolean;
+  overCapacity: boolean;
+  waitlist: WaitEntry[];
   hasLessons: boolean;
   status: "ACTIVE" | "ARCHIVED";
 };
@@ -47,22 +54,40 @@ export function CourseDirectory({
   classes,
   courseOptions,
   teacherOptions,
+  students,
+  openClassId = "",
+  openFormKey = "",
 }: {
   courses: CourseRow[];
   classes: ClassRow[];
   courseOptions: CourseOption[];
   teacherOptions: TeacherOption[];
+  students: WaitStudent[];
+  openClassId?: string;
+  openFormKey?: string;
 }) {
   const router = useRouter();
+  const t = usePick();
   const [pending, startTransition] = useTransition();
   const [creating, setCreating] = useState<"course" | "class" | null>(null);
   const [archiving, setArchiving] = useState<{ kind: "course" | "class"; id: string; name: string } | null>(null);
   const [editing, setEditing] = useState<CourseRow | null>(null);
   const [editingClass, setEditingClass] = useState<ClassRow | null>(null);
   const [confirmTeacherChange, setConfirmTeacherChange] = useState<FormData | null>(null);
+  const [confirmCapacityShrink, setConfirmCapacityShrink] = useState<FormData | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [message, setMessage] = useState("");
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+
+  useEffect(() => {
+    if (!openClassId) return;
+    document.getElementById(`class-${openClassId}`)?.scrollIntoView({ block: "start" });
+  }, [openClassId]);
+
+  useEffect(() => {
+    if (openFormKey.startsWith("course")) setCreating("course");
+    if (openFormKey.startsWith("class")) setCreating("class");
+  }, [openFormKey]);
 
   function saveCourse(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -98,17 +123,24 @@ export function CourseDirectory({
     });
   }
 
-  function commitClassEdit(formData: FormData) {
+  function commitClassEdit(formData: FormData, acknowledgeCapacityShrink = false) {
+    if (acknowledgeCapacityShrink) formData.set("acknowledgeCapacityShrink", "1");
     setMessage("");
     setFieldErrors({});
     startTransition(async () => {
       const result = await updateClassGroup(formData);
       if (!result.ok) {
+        if (result.needsCapacityConfirm) {
+          setConfirmCapacityShrink(formData);
+          setMessage(result.message ?? "");
+          return;
+        }
         setMessage(result.message ?? "");
         setFieldErrors(result.fieldErrors ?? {});
         return;
       }
       setConfirmTeacherChange(null);
+      setConfirmCapacityShrink(null);
       setEditingClass(null);
       router.refresh();
     });
@@ -176,8 +208,8 @@ export function CourseDirectory({
     <section className="space-y-8">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-[28px] font-semibold tracking-tight">课程与班级</h1>
-          <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">课程是机构自己定义的类型。班级挂在课程下，并指定一名主讲教师。</p>
+          <h1 className="text-[28px] font-semibold tracking-tight">{t("课程与班级", "Courses")}</h1>
+          <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">{t("课程是机构自己定义的类型。班级挂在课程下，并指定一名主讲教师。", "A course is a type you define. A class belongs to a course and has one main teacher.")}</p>
         </div>
         <button
           type="button"
@@ -295,11 +327,14 @@ export function CourseDirectory({
                 </tr>
               ) : (
                 visibleClasses.map((item) => (
-                  <tr key={item.id} className="border-t border-[#eef1ee]">
+                  <tr id={`class-${item.id}`} key={item.id} className="scroll-mt-24 border-t border-[#eef1ee]">
                     <td className="px-4 py-4 font-bold">{item.name}</td>
                     <td className="px-4 py-4">{item.courseName}</td>
                     <td className="px-4 py-4">{item.teacherName}</td>
-                    <td className="px-4 py-4 text-[var(--muted)]">{item.capacity ?? "不限"}</td>
+                    <td className="px-4 py-4 text-[var(--muted)]">
+                      <span>{item.capacity == null ? "不限" : `${item.enrolledCount} / ${item.capacity}`}</span>
+                      {item.overCapacity ? <span className="ml-2 rounded-full bg-[#fff0ed] px-2 py-1 text-[10px] font-bold text-[#b94d4d]">超员</span> : item.full ? <span className="ml-2 rounded-full bg-[#fff2df] px-2 py-1 text-[10px] font-bold text-[#9a6729]">已满</span> : null}
+                    </td>
                     <td className="px-4 py-4">
                       <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${item.status === "ACTIVE" ? "bg-[#edf5f1] text-[#34725d]" : "bg-[#eef1ee] text-[#74838b]"}`}>
                         {item.status === "ACTIVE" ? "启用中" : "已归档"}
@@ -309,6 +344,7 @@ export function CourseDirectory({
                       {item.status === "ACTIVE" ? (
                         <span className="flex gap-3">
                           <button type="button" className="font-bold text-[var(--teal)]" onClick={() => { setEditingClass(item); setFieldErrors({}); setMessage(""); }}>编辑</button>
+                          <ClassWaitlistButton classId={item.id} className={item.name} full={item.full} enrolled={item.enrolledCount} capacity={item.capacity} entries={item.waitlist} students={students} enrolledStudentIds={item.enrolledStudentIds} startOpen={openClassId === item.id} />
                           <button type="button" className="font-bold text-[#9a6729]" onClick={() => setArchiving({ kind: "class", id: item.id, name: item.name })}>
                             归档
                           </button>
@@ -438,6 +474,20 @@ export function CourseDirectory({
               </button>
             </div>
           </form>
+        </Modal>
+      ) : null}
+
+      {confirmCapacityShrink ? (
+        <Modal title="容量小于在读人数" onClose={() => setConfirmCapacityShrink(null)}>
+          <div className="px-5 py-5 text-sm leading-7 text-[var(--muted)]">
+            {message || "容量会小于当前在读人数，班级将显示超员，排队也不能再转入。"}
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setConfirmCapacityShrink(null)} className="rounded-[10px] border border-[var(--line)] px-3.5 py-2.5 text-xs font-bold">取消</button>
+              <button type="button" disabled={pending} onClick={() => commitClassEdit(confirmCapacityShrink, true)} className="rounded-[10px] bg-[#c27b35] px-3.5 py-2.5 text-xs font-bold text-white disabled:opacity-60">
+                {pending ? "正在保存…" : "仍要改容量"}
+              </button>
+            </div>
+          </div>
         </Modal>
       ) : null}
 
