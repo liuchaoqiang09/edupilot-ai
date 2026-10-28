@@ -9,6 +9,7 @@ const kindLabel = {
   HOMEWORK: "作业",
   REPORT: "报告",
   MAKEUP: "补课",
+  EXAM: "成绩",
 } as const;
 
 export default async function ParentNoticesPage() {
@@ -25,7 +26,7 @@ export default async function ParentNoticesPage() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-[28px] font-semibold tracking-tight">消息</h1>
-          <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">调课、停课、换教室、代课、新作业、已发布报告和补课安排会留在这里。短信还没有开通，系统不会假装已经发出短信。</p>
+          <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">调课、停课、换教室、代课、新作业、成绩发布、已发布报告和补课安排会留在这里。短信还没有开通，系统不会假装已经发出短信。</p>
         </div>
         {unread > 0 ? (
           <form action={markNoticesRead}>

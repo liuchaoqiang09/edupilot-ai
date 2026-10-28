@@ -15,6 +15,7 @@ import { addTeacherLessonStudent } from "@/app/teacher/actions";
 import { writeAudit } from "@/lib/audit";
 import { recordPayment } from "@/lib/billing-ledger";
 import { syncAttendanceCharge, CourseHourError } from "@/lib/course-hours";
+import { resolveTeacherAddSeat } from "@/lib/lesson-seat-rules";
 import { ownerOverview, ownerSnapshot } from "@/lib/dashboard";
 import { formatClock, formatDateTime, parseShanghaiDateTime, shanghaiDateKey } from "@/lib/datetime";
 import { isPaymentMethod, paymentMethodLabel } from "@/lib/enrollment-money";
@@ -25,6 +26,7 @@ import { ownerTodoLists } from "@/lib/todo-center";
 import { generateLessonAnalysis, AiReportError } from "@/lib/ai-service";
 import { generateAndStoreDraft, readOrgReportSettings, recentSummariesForPrompt } from "@/lib/report-flow";
 import { cancelPendingLessonRequests, submitLessonRequest } from "@/lib/lesson-requests";
+import { assertAssistantMayExecute, assistantForbiddenMessage, isAssistantFinanceTool } from "@/lib/assistant-policy";
 import { notifyHomeworkSaved, notifyLessonChange, notifyMakeupArranged } from "@/lib/parent-notice";
 import { prisma } from "@/lib/prisma";
 import { recurringDates } from "@/lib/recurring-schedule";
@@ -53,19 +55,26 @@ export const ownerPages = [
   { href: "/owner/courses", label: "课程与班级" },
   { href: "/owner/rooms", label: "教室管理" },
   { href: "/owner/schedule", label: "排课 / 课表" },
+  { href: "/owner/attendance", label: "出勤记录" },
   { href: "/owner/reports", label: "教学报告" },
+  { href: "/owner/exams", label: "考试成绩" },
   { href: "/owner/billing", label: "报名与课时" },
   { href: "/owner/audit", label: "操作记录" },
   { href: "/owner/stats", label: "基础统计" },
   { href: "/owner/settings", label: "机构设置" },
+  { href: "/owner/account", label: "账号管理" },
 ] as const;
 
 const teacherPages = [
   { href: "/teacher", label: "总览" },
   { href: "/teacher/schedule", label: "我的课表" },
+  { href: "/teacher/attendance", label: "学生签到" },
   { href: "/teacher/students", label: "我的学生" },
   { href: "/teacher/records", label: "教学记录" },
+  { href: "/teacher/homework", label: "作业批改" },
+  { href: "/teacher/exams", label: "考试成绩" },
   { href: "/teacher/reports", label: "教学报告" },
+  { href: "/teacher/account", label: "账号管理" },
 ] as const;
 
 const ownerOnly = new Set([
@@ -153,7 +162,7 @@ export function resolveNavigate(area: Area, raw: string) {
   const aliased = path === "/owner/classrooms" ? "/owner/rooms" : path;
   const pages = area === "owner" ? ownerPages : teacherPages;
   const match = pages.find((page) => page.href === aliased);
-  if (!match) return { ok: false as const, message: area === "teacher" ? "教师端不能打开财务、教师管理、机构设置、统计或操作记录。可以打开总览、课表、我的学生、教学记录或教学报告。" : "只能打开左侧菜单里的页面。" };
+  if (!match) return { ok: false as const, message: area === "teacher" ? "教师端不能打开财务、教师管理、机构设置、统计或操作记录。可以打开总览、课表、签到、学生、教学记录、作业、考试或教学报告。" : "只能打开左侧菜单里的页面。" };
   return { ok: true as const, href: match.href, label: match.label };
 }
 
@@ -179,13 +188,7 @@ export function lookupTools(actor: Actor) {
 export function executeTools(actor: Actor): OpenAI.Chat.ChatCompletionTool[] {
   const owner = actor.area === "owner";
   const shared: OpenAI.Chat.ChatCompletionTool[] = [
-    tool("execute_adjust_hours", "直接发起课时调整。信息够就立刻调用，系统会弹出带参数的确认框，用户点确认后才写入。", {
-      studentId: textProp("学生 ID，必须来自 search_student"),
-      courseId: textProp("课程 ID，必须来自查询结果"),
-      deltaHours: { type: "integer", description: "正数增加，负数减少，不能为 0" },
-      reason: textProp("原因，1 到 80 个字"),
-    }, ["studentId", "courseId", "deltaHours", "reason"]),
-    tool("execute_schedule_lesson", "直接发起单次或周期排课。信息够就立刻调用。mode 用 single 或 recurring。", {
+    tool("execute_schedule_lesson", "直接发起单次或周期排课。信息够就立刻调用。mode 用 single 或 recurring。教师只能排自己负责的班。", {
       mode: { type: "string", enum: ["single", "recurring"] },
       classGroupId: textProp("班级 ID"),
       classroom: textProp("教室 ID 或名称"),
@@ -226,28 +229,18 @@ export function executeTools(actor: Actor): OpenAI.Chat.ChatCompletionTool[] {
   if (!owner) return shared;
   return [
     ...shared,
-    tool("execute_enrollment", "直接发起报名和收款。学生、课程、班级、应收、实收都有了就立刻调用，不要让用户自己去填表。", {
+    tool("execute_enrollment", "直接发起报名建档（实收记 0）。学生、课程、班级、应收齐了就立刻调用。收款、退费、调课时不能由助教写，请引导用户打开报名与课时页。", {
       studentId: textProp("学生 ID"),
       courseId: textProp("课程 ID"),
       classGroupId: textProp("班级 ID"),
       amountDue: textProp("应收，元"),
-      amountPaid: textProp("实收，元"),
       hours: { type: "integer", description: "按课时课程的购买节数" },
-      payMethod: { type: "string", enum: ["CASH", "WECHAT", "ALIPAY", "BANK", "OTHER"] },
       discountPercent: textProp("可选，例如 80%"),
       startDate: textProp("按周期课程 YYYY-MM-DD"),
       endDate: textProp("按周期课程 YYYY-MM-DD"),
-    }, ["studentId", "courseId", "classGroupId", "amountDue", "amountPaid"]),
-    tool("execute_payment", "直接发起收款或退费。kind 用 collect 或 refund。", {
-      studentId: textProp("学生 ID"),
-      courseId: textProp("课程 ID"),
-      amount: textProp("金额，元"),
-      method: { type: "string", enum: ["CASH", "WECHAT", "ALIPAY", "BANK", "OTHER"] },
-      kind: { type: "string", enum: ["collect", "refund"] },
-      reason: textProp("退费必填"),
-    }, ["studentId", "courseId", "amount", "method", "kind"]),
-    tool("execute_student_crud", "直接发起新建、修改学生，停用或恢复档案，停用某门报名，或生成家长邀请码。action 用 create、update、status、stop、bind。", {
-      action: { type: "string", enum: ["create", "update", "status", "stop", "bind"] },
+    }, ["studentId", "courseId", "classGroupId", "amountDue"]),
+    tool("execute_student_crud", "直接发起新建、修改学生，停用或恢复档案，或停用某门报名。action 用 create、update、status、stop。不能生成家长绑定码。", {
+      action: { type: "string", enum: ["create", "update", "status", "stop"] },
       studentId: textProp("除新建外必填"),
       name: textProp("姓名"),
       grade: textProp("年级"),
@@ -257,8 +250,8 @@ export function executeTools(actor: Actor): OpenAI.Chat.ChatCompletionTool[] {
       courseId: textProp("停用报名时的课程 ID"),
       reason: textProp("停用报名的原因"),
     }, ["action"]),
-    tool("execute_teacher_crud", "直接发起新建教师、停用或恢复、分配课程、生成教师邀请码。action 用 create、status、assign、invite。", {
-      action: { type: "string", enum: ["create", "status", "assign", "invite"] },
+    tool("execute_teacher_crud", "直接发起新建教师、停用或恢复、分配课程。action 用 create、status、assign。不能生成登录邀请码。", {
+      action: { type: "string", enum: ["create", "status", "assign"] },
       teacherId: textProp("教师 ID"),
       name: textProp("姓名"),
       phone: textProp("手机"),
@@ -302,10 +295,11 @@ export function executeTools(actor: Actor): OpenAI.Chat.ChatCompletionTool[] {
 export function routeExecute(name: string, args: Record<string, unknown>): { error: string } | { tool: string; args: Record<string, unknown> } | null {
   const action = typeof args.action === "string" ? args.action : "";
   const mode = typeof args.mode === "string" ? args.mode : "";
-  if (name === "navigate_to" || /delete|remove|drop|销毁/i.test(name) || name.includes("删除")) {
-    return { error: "不能只跳转页面，也不能删除。请调用对应的 execute_ 工具完成业务。" };
+  const gate = assertAssistantMayExecute(name, args);
+  if (!gate.ok) return { error: gate.message };
+  if (name === "navigate_to") {
+    return { error: "不能只跳转页面。请调用对应的 execute_ 工具完成业务。" };
   }
-  if (name === "execute_adjust_hours") return { tool: "adjust_student_hours", args };
   if (name === "execute_schedule_lesson") return { tool: mode === "recurring" ? "schedule_recurring_lessons" : "create_lesson", args };
   if (name === "execute_mark_attendance") return { tool: "mark_attendance", args };
   if (name === "execute_generate_report") {
@@ -318,17 +312,16 @@ export function routeExecute(name: string, args: Record<string, unknown>): { err
     const toolName = map[action];
     return toolName ? { tool: toolName, args } : { error: "请说明是调课、换教室、换教师、取消、补课还是加入名单。" };
   }
-  if (name === "execute_enrollment") return { tool: "create_enrollment", args };
-  if (name === "execute_payment") return { tool: "record_payment", args };
+  if (name === "execute_enrollment") return { tool: "create_enrollment", args: { ...args, amountPaid: "0" } };
   if (name === "execute_student_crud") {
-    const map: Record<string, string> = { create: "create_student", update: "update_student", status: "set_student_status", stop: "stop_enrollment", bind: "bind_parent" };
+    const map: Record<string, string> = { create: "create_student", update: "update_student", status: "set_student_status", stop: "stop_enrollment" };
     const toolName = map[action];
-    return toolName ? { tool: toolName, args } : { error: "请说明是新建、修改、停用、恢复、停报名还是绑定家长。" };
+    return toolName ? { tool: toolName, args } : { error: "请说明是新建、修改、停用、恢复还是停报名。家长绑定码请到账号页面办理。" };
   }
   if (name === "execute_teacher_crud") {
-    const map: Record<string, string> = { create: "create_teacher", status: "set_teacher_status", assign: "assign_course_to_teacher", invite: "issue_teacher_invite" };
+    const map: Record<string, string> = { create: "create_teacher", status: "set_teacher_status", assign: "assign_course_to_teacher" };
     const toolName = map[action];
-    return toolName ? { tool: toolName, args } : { error: "请说明是新建教师、停用、分配课程还是生成邀请码。" };
+    return toolName ? { tool: toolName, args } : { error: "请说明是新建教师、停用还是分配课程。登录邀请请到教师档案页面办理。" };
   }
   if (name === "execute_course") {
     const map: Record<string, string> = { create_course: "create_course", create_class: "create_class_group", update_class: "update_class_group", archive_course: "set_course_status", restore_course: "set_course_status", archive_class: "set_class_status", restore_class: "set_class_status" };
@@ -830,7 +823,8 @@ async function revenueSummary(actor: Actor) {
 }
 
 export async function previewOperation(actor: Actor, name: string, args: Record<string, unknown>): Promise<Preview> {
-  if (/delete|remove|drop|销毁/i.test(name) || name.includes("删除")) return { ok: false, message: "不能通过小星助教删除数据。" };
+  const gate = assertAssistantMayExecute(name, args);
+  if (!gate.ok) return { ok: false, message: gate.message };
   if (blocked(actor, name) || !operationWrites.has(name)) return { ok: false, message: denied };
   if (name === "create_student") return previewStudent(args);
   if (name === "bind_parent") return previewParent(actor, args);
@@ -1227,7 +1221,12 @@ async function previewAddStudent(actor: Actor, args: Record<string, unknown>): P
   if (!lesson || !student) return { ok: false, message: "没有找到课次或在读学生，或你不能修改这节课。" };
   if (actor.area === "teacher" && lesson.startAt.getTime() <= Date.now()) return { ok: false, message: "课次已经开始，不能再改名单。" };
   if (!["ENROLLED", "TRIAL", "GUEST"].includes(seat)) return { ok: false, message: "请选择本班、试听或临时。" };
-  return { ok: true, summary: `把【${student.name}】加入【${lesson.title ?? "课次"}】`, detail: "", args: { lessonId: lesson.id, studentId: student.id, seat } };
+  return {
+    ok: true,
+    summary: `把【${student.name}】加入【${lesson.title ?? "课次"}】`,
+    detail: "本班须已报名且班级一致；临时须已报名该课程（可跨班）；试听可不报名。",
+    args: { lessonId: lesson.id, studentId: student.id, seat },
+  };
 }
 
 async function executeOrg(actor: Actor, name: string) {
@@ -1254,16 +1253,33 @@ async function executeAddStudent(actor: Actor, args: Record<string, string | num
   }
   const lesson = await prisma.lessonSession.findFirst({
     where: { id: String(args.lessonId), organizationId: actor.organizationId, status: { not: "CANCELLED" } },
-    select: { id: true, title: true, classGroupId: true, students: { select: { studentId: true } } },
+    select: { id: true, title: true, courseId: true, classGroupId: true, students: { select: { studentId: true } } },
   });
   const student = await prisma.student.findFirst({ where: { id: String(args.studentId), organizationId: actor.organizationId, status: "ACTIVE" }, select: { id: true, name: true } });
   if (!lesson || !student) return { ok: false as const, message: "没有找到课次或在读学生。" };
   if (lesson.students.some((row) => row.studentId === student.id)) return { ok: false as const, message: "这名学生已经在这节课的名单里。" };
-  const enrolledHere = await prisma.enrollment.findFirst({ where: { organizationId: actor.organizationId, studentId: student.id, classGroupId: lesson.classGroupId, student: { status: "ACTIVE" } }, select: { id: true } });
-  const requested = String(args.seat);
-  const seat = enrolledHere ? "ENROLLED" : requested === "TRIAL" || requested === "GUEST" ? requested : null;
-  if (!seat) return { ok: false as const, message: "不是本班学生时，请选择临时或试听。" };
-  await prisma.lessonStudent.create({ data: { organizationId: actor.organizationId, lessonSessionId: lesson.id, studentId: student.id, seat, lastAction: seat === "TRIAL" ? "加入试听" : seat === "GUEST" ? "临时加入" : "加入课次" } });
+  try {
+    const resolved = await resolveTeacherAddSeat(prisma, {
+      organizationId: actor.organizationId,
+      studentId: student.id,
+      studentName: student.name,
+      courseId: lesson.courseId,
+      classGroupId: lesson.classGroupId,
+      requested: String(args.seat),
+    });
+    await prisma.lessonStudent.create({
+      data: {
+        organizationId: actor.organizationId,
+        lessonSessionId: lesson.id,
+        studentId: student.id,
+        seat: resolved.seat,
+        lastAction: resolved.lastAction,
+      },
+    });
+  } catch (error) {
+    if (error instanceof CourseHourError) return { ok: false as const, message: error.message };
+    throw error;
+  }
   return { ok: true as const, message: `已把${student.name}加入「${lesson.title ?? "课次"}」。` };
 }
 
@@ -1283,12 +1299,14 @@ function actionText(result: { ok: boolean; message?: string; fieldErrors?: Recor
 }
 
 function refreshPages() {
-  for (const path of ["/owner", "/owner/todos", "/owner/students", "/owner/teachers", "/owner/courses", "/owner/rooms", "/owner/schedule", "/owner/reports", "/owner/billing", "/owner/audit", "/owner/stats", "/teacher", "/teacher/schedule", "/teacher/records", "/teacher/reports"]) {
+  for (const path of ["/owner", "/owner/todos", "/owner/students", "/owner/teachers", "/owner/courses", "/owner/rooms", "/owner/schedule", "/owner/reports", "/owner/billing", "/owner/audit", "/owner/stats", "/teacher", "/teacher/schedule", "/teacher/attendance", "/teacher/records", "/teacher/reports"]) {
     revalidatePath(path);
   }
 }
 
 export async function executeOperation(actor: Actor, name: string, args: Record<string, string | number>) {
+  const gate = assertAssistantMayExecute(name, args);
+  if (!gate.ok) return { ok: false as const, message: gate.message };
   if (blocked(actor, name) || !operationWrites.has(name)) return { ok: false as const, message: denied };
   try {
     const result = await runExecute(actor, name, args);
@@ -1363,29 +1381,23 @@ async function runExecute(actor: Actor, name: string, args: Record<string, strin
       "courseId:0": args.courseId,
       "classGroupId:0": args.classGroupId,
       "amountDue:0": args.amountDue,
-      "amount:0": args.amountPaid,
+      "amount:0": "0",
       "hoursAdded:0": args.hours,
-      "payMethod:0": args.payMethod,
+      "payMethod:0": "CASH",
       "discountPercent:0": args.discountPercent,
       "startDate:0": args.startDate,
       "endDate:0": args.endDate,
     }));
-    return { ok: result.ok, message: result.message || (result.ok ? "报名已办理。" : "没有办理报名。") };
+    return {
+      ok: result.ok,
+      message: result.message || (result.ok ? "报名已建档（实收 0）。收款请到报名与课时页办理。" : "没有办理报名。"),
+    };
   }
-  if (name === "record_payment") {
-    const cents = Math.round(Number(args.amount) * 100);
-    await prisma.$transaction((tx) => recordPayment(tx, {
-      organizationId: actor.organizationId,
-      actorId: actor.id,
-      actorName: actor.name,
-      enrollmentId: String(args.enrollmentId),
-      amountCents: cents,
-      method: String(args.method) as "CASH",
-      paidAt: new Date(),
-      reason: String(args.reason || ""),
-      kind: args.kind === "refund" ? "refund" : "collect",
-    }));
-    return { ok: true as const, message: args.kind === "refund" ? "退费已记录。" : "收款已记录。" };
+  if (name === "record_payment" || name === "adjust_student_hours" || isAssistantFinanceTool(name)) {
+    return { ok: false as const, message: assistantForbiddenMessage("finance") };
+  }
+  if (name === "bind_parent" || name === "issue_teacher_invite") {
+    return { ok: false as const, message: assistantForbiddenMessage("account") };
   }
   if (name === "add_waitlist") {
     const result = await joinClassWaitlist(String(args.classGroupId), form({ studentId: args.studentId }));
@@ -1579,17 +1591,30 @@ async function teacherMakeup(actor: Actor, sourceId: string, targetLessonId: str
   if (already) return { ok: false, message: "这次请假已经安排过补课。" };
   const target = await prisma.lessonSession.findFirst({
     where: { id: targetLessonId, organizationId: actor.organizationId, teacherId: actor.teacherId ?? "__none__", courseId: source.lessonSession.courseId, status: { not: "CANCELLED" } },
-    select: { id: true, title: true, startAt: true, students: { where: { studentId: source.studentId }, select: { id: true } } },
+    select: { id: true, title: true, startAt: true, classGroupId: true, courseId: true, students: { where: { studentId: source.studentId }, select: { id: true } } },
   });
   if (!target || target.id === source.lessonSession.id || target.students.length > 0) return { ok: false, message: "只能补到你自己讲授的、同一门课、且这名学生还不在名单里的课次。" };
-  const created = await prisma.$transaction(async (tx) => {
-    const row = await tx.lessonStudent.create({
-      data: { organizationId: actor.organizationId, lessonSessionId: target.id, studentId: source.studentId, seat: "GUEST", makeupSourceId: source.id, lastAction: "安排补课" },
-      select: { id: true },
+  let created: string;
+  try {
+    created = await prisma.$transaction(async (tx) => {
+      const { createMakeupRow } = await import("@/lib/makeup");
+      const row = await createMakeupRow(tx, {
+        organizationId: actor.organizationId,
+        targetLessonId: target.id,
+        classGroupId: target.classGroupId,
+        courseId: target.courseId,
+        studentId: source.studentId,
+        studentName: source.student.name,
+        sourceId: source.id,
+        lastAction: "安排补课",
+      });
+      await writeAudit(tx, { organizationId: actor.organizationId, actorId: actor.id, action: "MAKEUP_SCHEDULED", targetType: "LessonStudent", targetId: row.id, detail: `${actor.name}把${source.student.name}加入「${target.title ?? "课次"}」补课` });
+      return row.id;
     });
-    await writeAudit(tx, { organizationId: actor.organizationId, actorId: actor.id, action: "MAKEUP_SCHEDULED", targetType: "LessonStudent", targetId: row.id, detail: `${actor.name}把${source.student.name}加入「${target.title ?? "课次"}」补课` });
-    return row.id;
-  });
+  } catch (error) {
+    if (error instanceof CourseHourError) return { ok: false, message: error.message };
+    throw error;
+  }
   await notifyMakeupArranged({
     organizationId: actor.organizationId,
     studentId: source.studentId,
@@ -1632,7 +1657,10 @@ async function executeGenerate(actor: Actor, args: Record<string, string | numbe
       homework: record.homework ?? "",
     });
   }
-  const organization = await prisma.organization.findUnique({ where: { id: actor.organizationId }, select: { reportLanguage: true, aiUseRecentSummaries: true, aiTeacherMustConfirm: true } });
+  const organization = await prisma.organization.findUnique({
+    where: { id: actor.organizationId },
+    select: { reportLanguage: true, aiUseRecentSummaries: true, aiTeacherMustConfirm: true, aiRequireEvidence: true },
+  });
   const settings = readOrgReportSettings(organization);
   const existing = await prisma.teachingReport.findMany({ where: { organizationId: actor.organizationId, lessonSessionId: lesson.id }, select: { id: true, studentId: true, status: true } });
   const byStudent = new Map(existing.map((row) => [row.studentId, row]));
@@ -1651,6 +1679,7 @@ async function executeGenerate(actor: Actor, args: Record<string, string | numbe
       await generateAndStoreDraft(prisma, { organizationId: actor.organizationId, lessonSessionId: lesson.id, studentId: row.studentId, teachingRecordId: record.id, existingId: current?.id ?? null }, () => generateLessonAnalysis({
         language: settings.reportLanguage,
         useRecentSummaries: settings.aiUseRecentSummaries,
+        requireEvidence: settings.aiRequireEvidence,
         history,
         lessonContent: record.lessonContent,
         studentPerformance: record.studentPerformance,

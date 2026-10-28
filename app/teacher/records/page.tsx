@@ -1,6 +1,6 @@
 import { TeacherRecords } from "@/components/teacher-records";
 import { requireRole } from "@/lib/auth";
-import { formatClock, formatDateLabel, formatDateTime, shanghaiDateKey } from "@/lib/datetime";
+import { formatClock, formatDateLabel, formatDateTime, shanghaiDateKey, shanghaiDateTimeLocalValue } from "@/lib/datetime";
 import { prisma } from "@/lib/prisma";
 
 export default async function TeacherRecordsPage({
@@ -65,6 +65,7 @@ export default async function TeacherRecordsPage({
               studentPerformance: lesson.teachingRecord.studentPerformance,
               difficulties: lesson.teachingRecord.difficulties,
               homework: lesson.teachingRecord.homework ?? "",
+              homeworkDueAt: lesson.teachingRecord.homeworkDueAt ? shanghaiDateTimeLocalValue(lesson.teachingRecord.homeworkDueAt) : "",
               teacherPrivateNote: lesson.teachingRecord.teacherPrivateNote ?? "",
             }
           : null,

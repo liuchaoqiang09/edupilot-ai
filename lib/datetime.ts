@@ -32,6 +32,21 @@ export function parseShanghaiDateTime(value: string) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+/** 供 `<input type="datetime-local">` 使用的上海时区值。 */
+export function shanghaiDateTimeLocalValue(date: Date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: SHANGHAI,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const get = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? "00";
+  return `${get("year")}-${get("month")}-${get("day")}T${get("hour")}:${get("minute")}`;
+}
+
 export function formatClock(date: Date) {
   return new Intl.DateTimeFormat("zh-CN", {
     timeZone: SHANGHAI,

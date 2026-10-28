@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireRole } from "@/lib/auth";
+import { parseShanghaiDateTime } from "@/lib/datetime";
 import { prisma } from "@/lib/prisma";
 import { notifyHomeworkSaved } from "@/lib/parent-notice";
 import { publishReportByTeacher } from "@/lib/report-flow";
@@ -25,6 +26,7 @@ function refresh() {
   revalidatePath("/owner/reports");
   revalidatePath("/parent/reports");
   revalidatePath("/parent/homework");
+  revalidatePath("/teacher/homework");
 }
 
 async function ownLesson(lessonId: string) {
@@ -38,7 +40,7 @@ async function ownLesson(lessonId: string) {
     where: { id: lessonId, organizationId: user.organizationId, teacherId: teacher.id, status: { not: "CANCELLED" } },
     include: {
       students: { select: { studentId: true, student: { select: { name: true } } } },
-      teachingRecord: { select: { id: true, lessonContent: true, studentPerformance: true, difficulties: true, homework: true } },
+      teachingRecord: { select: { id: true, lessonContent: true, studentPerformance: true, difficulties: true, homework: true, homeworkDueAt: true } },
     },
   });
   return { user, teacher, lesson };
@@ -54,6 +56,9 @@ export async function saveTeachingRecord(lessonId: string, formData: FormData): 
   const difficulties = clean(formData.get("difficulties"));
   const homework = clean(formData.get("homework"));
   const teacherPrivateNote = clean(formData.get("teacherPrivateNote"));
+  const dueRaw = clean(formData.get("homeworkDueAt"));
+  const homeworkDueAt = dueRaw ? parseShanghaiDateTime(dueRaw) : null;
+  if (dueRaw && !homeworkDueAt) return { ok: false, message: "作业截止时间格式不对。" };
   if ([lessonContent, studentPerformance, difficulties, homework, teacherPrivateNote].some(tooLong)) {
     return { ok: false, message: "每一项不能超过 2000 个字。" };
   }
@@ -69,6 +74,7 @@ export async function saveTeachingRecord(lessonId: string, formData: FormData): 
       studentPerformance,
       difficulties,
       homework: homework || null,
+      homeworkDueAt: homework ? homeworkDueAt : null,
       teacherPrivateNote: teacherPrivateNote || null,
     },
     update: {
@@ -76,6 +82,7 @@ export async function saveTeachingRecord(lessonId: string, formData: FormData): 
       studentPerformance,
       difficulties,
       homework: homework || null,
+      homeworkDueAt: homework ? homeworkDueAt : null,
       teacherPrivateNote: teacherPrivateNote || null,
     },
   });

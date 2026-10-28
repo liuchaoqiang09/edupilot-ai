@@ -10,15 +10,22 @@ export type OrgReportSettings = {
   reportLanguage: ReportLanguage;
   aiUseRecentSummaries: boolean;
   aiTeacherMustConfirm: boolean;
+  aiRequireEvidence: boolean;
 };
 
 export function readOrgReportSettings(
-  org: { reportLanguage: string; aiUseRecentSummaries: boolean; aiTeacherMustConfirm: boolean } | null,
+  org: {
+    reportLanguage: string;
+    aiUseRecentSummaries: boolean;
+    aiTeacherMustConfirm: boolean;
+    aiRequireEvidence?: boolean;
+  } | null,
 ): OrgReportSettings {
   return {
     reportLanguage: normalizeReportLanguage(org?.reportLanguage),
     aiUseRecentSummaries: org ? org.aiUseRecentSummaries : true,
     aiTeacherMustConfirm: org ? org.aiTeacherMustConfirm : true,
+    aiRequireEvidence: org?.aiRequireEvidence ?? true,
   };
 }
 

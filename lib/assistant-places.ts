@@ -16,7 +16,7 @@ const ownerPlaces = [
   "操作记录", "基础统计", "机构设置", "工作台", "账号",
 ] as const;
 
-const teacherPlaces = ["记录考勤", "教学记录", "教学报告", "我的学生", "我的课表", "课次详情"] as const;
+const teacherPlaces = ["记录考勤", "教学记录", "作业批改", "考试成绩", "教学报告", "我的学生", "我的课表", "课次详情"] as const;
 
 export function openExactTool(area: "owner" | "teacher"): OpenAI.Chat.ChatCompletionTool {
   const places = area === "owner" ? ownerPlaces : teacherPlaces;
@@ -127,6 +127,12 @@ export async function resolveExactPlace(actor: Actor, place: string, target: str
       if (lesson) return { ok: true as const, href: `/teacher/records?lesson=${lesson.id}`, reply: `已打开${lesson.title ?? "这节课"}的教学记录。` };
       return { ok: true as const, href: "/teacher/records", reply: "教学记录已打开。" };
     }
+    if (place === "作业批改") {
+      const lesson = await lessonFor(actor, text);
+      if (lesson) return { ok: true as const, href: `/teacher/homework/${lesson.id}`, reply: `已打开${lesson.title ?? "这节课"}的作业批改。` };
+      return { ok: true as const, href: "/teacher/homework", reply: "作业批改已打开。" };
+    }
+    if (place === "考试成绩") return { ok: true as const, href: "/teacher/exams", reply: "考试成绩已打开。" };
     const lesson = await lessonFor(actor, text);
     if (lesson) {
       const date = shanghaiDateKey(lesson.startAt);

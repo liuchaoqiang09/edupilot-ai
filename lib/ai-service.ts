@@ -148,6 +148,7 @@ function parseReport(content: string, model: string): GeneratedReport {
 export function buildLessonAnalysisPrompt(input: {
   language: ReportLanguage;
   useRecentSummaries: boolean;
+  requireEvidence?: boolean;
   history: HistorySummary[];
   lessonContent: string;
   studentPerformance: string;
@@ -158,6 +159,12 @@ export function buildLessonAnalysisPrompt(input: {
   const text = copy[input.language];
   const redact = (value: string, max = 2000) =>
     clip(redactStudentNames(stripPromptMarkup(value), input.studentNames, text.student), text.missing, max);
+  const evidence =
+    input.requireEvidence === false
+      ? ""
+      : input.language === "en"
+        ? " Every claim must stay traceable to the lesson notes or listed history; if unsure, use the missing-info sentence."
+        : "每一条判断都必须能追溯到本节教学记录或列出的历史摘要；没有依据时只能写「本次记录未提供相关信息。」";
   const lines = [
     text.lead,
     `${text.fields[0]}：${redact(input.lessonContent)}`,
@@ -174,12 +181,13 @@ export function buildLessonAnalysisPrompt(input: {
       lines.push(`${index + 1}. ${redact(item.label, 80)}：${redact(item.summary, 500)}`);
     });
   }
-  return { system: text.system, user: lines.join("\n") };
+  return { system: `${text.system}${evidence}`, user: lines.join("\n") };
 }
 
 export async function generateLessonAnalysis(input: {
   language: ReportLanguage;
   useRecentSummaries: boolean;
+  requireEvidence?: boolean;
   history: HistorySummary[];
   lessonContent: string;
   studentPerformance: string;

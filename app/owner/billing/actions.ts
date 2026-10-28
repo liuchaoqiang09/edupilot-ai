@@ -235,31 +235,13 @@ export async function createEnrollment(formData: FormData): Promise<ActionResult
       }
     }
     const courseIds = [...new Set(lines.map((line) => line.courseId))];
-    const converted = await tx.lessonStudent.findMany({
-      where: {
-        organizationId: user.organizationId,
-        studentId: student.id,
-        seat: "TRIAL",
-        lessonSession: { courseId: { in: courseIds }, status: { not: "CANCELLED" } },
-      },
-      select: { id: true, lessonSession: { select: { title: true } } },
+    const { convertTrialSeatsForCourses } = await import("@/lib/trial-convert");
+    await convertTrialSeatsForCourses(tx, {
+      organizationId: user.organizationId,
+      actorId: user.id,
+      studentId: student.id,
+      courseIds,
     });
-    if (converted.length > 0) {
-      await tx.lessonStudent.updateMany({
-        where: { id: { in: converted.map((row) => row.id) }, organizationId: user.organizationId, seat: "TRIAL" },
-        data: { seat: "CONVERTED", lastAction: "试听转为报名" },
-      });
-      for (const row of converted) {
-        await writeAudit(tx, {
-          organizationId: user.organizationId,
-          actorId: user.id,
-          action: "TRIAL_CONVERTED",
-          targetType: "LessonStudent",
-          targetId: row.id,
-          detail: `试听「${row.lessonSession.title ?? "课次"}」已转为报名`,
-        });
-      }
-    }
   });
   } catch (error) {
     if (error instanceof CourseHourError) return { ok: false, message: error.message };

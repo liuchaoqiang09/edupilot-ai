@@ -155,6 +155,11 @@ model Organization {
   lessonChangeRequests LessonChangeRequest[]
   reportReplies      ReportReply[]
   parentNotices      ParentNotice[]
+  homeworkSubmissions HomeworkSubmission[]
+  homeworkAssets     HomeworkAsset[]
+  exams              Exam[]
+  examResults        ExamResult[]
+  examReads          ExamRead[]
 
   @@schema("edupilot")
 }
@@ -188,6 +193,9 @@ model User {
   reviewedLessonRequests LessonChangeRequest[] @relation("LessonRequestReview")
   reportReplies      ReportReply[]
   parentNotices      ParentNotice[]
+  homeworkSubmitted  HomeworkSubmission[] @relation("HomeworkSubmittedBy")
+  examsPublished     Exam[] @relation("ExamPublishedBy")
+  examReads          ExamRead[]
 
   @@index([organizationId])
   @@schema("edupilot")
@@ -224,6 +232,9 @@ model Student {
   renewalFollowUps RenewalFollowUp[]
   membershipInvites MembershipInvite[]
   classWaitlists ClassWaitlist[]
+  homeworkSubmissions HomeworkSubmission[]
+  examResults        ExamResult[]
+  examReads          ExamRead[]
 
   @@unique([organizationId, studentNo])
   @@index([organizationId])
@@ -256,6 +267,8 @@ model Teacher {
   membershipInvites MembershipInvite[]
   courses        TeacherCourse[]
   substituteRequests LessonChangeRequest[] @relation("SubstituteTeacher")
+  homeworkGraded     HomeworkSubmission[] @relation("HomeworkGradedBy")
+  exams              Exam[]
 
   @@unique([organizationId, teacherNo])
   @@index([organizationId])
@@ -281,6 +294,7 @@ model Course {
   courseHourBalances CourseHourBalance[]
   hourAdjustments HourAdjustment[]
   renewalFollowUps RenewalFollowUp[]
+  exams          Exam[]
 
   @@index([organizationId])
   @@schema("edupilot")
@@ -316,6 +330,7 @@ model ClassGroup {
   lessonSessions LessonSession[]
   enrollments    Enrollment[]
   waitlist       ClassWaitlist[]
+  exams          Exam[]
 
   @@index([organizationId])
   @@index([courseId])
@@ -350,6 +365,7 @@ model LessonSession {
   teachingRecord TeachingRecord?
   changeRequests LessonChangeRequest[]
   reports        TeachingReport[]
+  homeworkSubmissions HomeworkSubmission[]
 
   @@index([organizationId, startAt])
   @@index([teacherId, startAt])
@@ -409,7 +425,7 @@ model LessonStudent {
   parentLeaveNote  String?
   hoursCharged     Boolean          @default(false)
   seat             LessonSeat       @default(ENROLLED)
-  makeupSourceId   String?
+  makeupSourceId   String?          @unique
   makeupSource     LessonStudent?   @relation("LessonMakeup", fields: [makeupSourceId], references: [id], onDelete: SetNull)
   makeups          LessonStudent[]  @relation("LessonMakeup")
   lastAction       String?
@@ -505,6 +521,8 @@ model TeachingRecord {
   studentPerformance  String        @default("")
   difficulties        String        @default("")
   homework            String?
+  /// 作业截止时间（上海日历语义由业务层解释）。空表示不设截止。
+  homeworkDueAt       DateTime?
   teacherPrivateNote  String?
   createdAt           DateTime      @default(now())
   updatedAt           DateTime      @updatedAt
@@ -512,6 +530,70 @@ model TeachingRecord {
 
   @@index([organizationId])
   @@index([teacherId])
+  @@schema("edupilot")
+}
+
+enum HomeworkStatus {
+  SUBMITTED
+  RETURNED
+  GRADED
+  COMPLETED
+
+  @@schema("edupilot")
+}
+
+enum HomeworkAssetKind {
+  IMAGE
+  FILE
+
+  @@schema("edupilot")
+}
+
+/// 一名学生对一节课作业的提交。布置内容仍在 TeachingRecord.homework。
+model HomeworkSubmission {
+  id                String         @id @default(cuid())
+  organizationId    String
+  organization      Organization   @relation(fields: [organizationId], references: [id])
+  lessonSessionId   String
+  lessonSession     LessonSession  @relation(fields: [lessonSessionId], references: [id])
+  studentId         String
+  student           Student        @relation(fields: [studentId], references: [id])
+  body              String         @default("")
+  status            HomeworkStatus @default(SUBMITTED)
+  submittedAt       DateTime?
+  submittedById     String?
+  submittedBy       User?          @relation("HomeworkSubmittedBy", fields: [submittedById], references: [id], onDelete: SetNull)
+  feedback          String?
+  score             String?
+  gradedAt          DateTime?
+  gradedByTeacherId String?
+  gradedByTeacher   Teacher?       @relation("HomeworkGradedBy", fields: [gradedByTeacherId], references: [id], onDelete: SetNull)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  assets            HomeworkAsset[]
+
+  @@unique([lessonSessionId, studentId])
+  @@index([organizationId, status])
+  @@index([studentId])
+  @@index([gradedByTeacherId])
+  @@schema("edupilot")
+}
+
+/// 作业提交的照片或附件，文件落在 uploads/homework-assets。
+model HomeworkAsset {
+  id             String            @id @default(cuid())
+  organizationId String
+  organization   Organization      @relation(fields: [organizationId], references: [id])
+  submissionId   String
+  submission     HomeworkSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  kind           HomeworkAssetKind
+  fileName       String
+  contentType    String
+  sizeBytes      Int
+  createdAt      DateTime          @default(now())
+
+  @@index([organizationId])
+  @@index([submissionId])
   @@schema("edupilot")
 }
 
@@ -621,7 +703,100 @@ enum ParentNoticeKind {
   HOMEWORK
   REPORT
   MAKEUP
+  EXAM
 
+  @@schema("edupilot")
+}
+
+enum ExamStatus {
+  DRAFT
+  PUBLISHED
+
+  @@schema("edupilot")
+}
+
+enum ExamScoreMode {
+  POINTS
+  GRADE
+  PASS_FAIL
+
+  @@schema("edupilot")
+}
+
+/// 一次考试/测评。挂在班级上，与单节课教学报告、作业提交分开。
+model Exam {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  classGroupId   String
+  classGroup     ClassGroup    @relation(fields: [classGroupId], references: [id])
+  courseId       String
+  course         Course        @relation(fields: [courseId], references: [id])
+  teacherId      String
+  teacher        Teacher       @relation(fields: [teacherId], references: [id])
+  title          String
+  examDate       DateTime
+  scoreMode      ExamScoreMode @default(POINTS)
+  maxScore       Decimal?      @db.Decimal(6, 1)
+  classSummary   String?
+  showAverage    Boolean       @default(false)
+  status         ExamStatus    @default(DRAFT)
+  publishedAt    DateTime?
+  publishedById  String?
+  publishedBy    User?         @relation("ExamPublishedBy", fields: [publishedById], references: [id], onDelete: SetNull)
+  revision       Int           @default(0)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  results        ExamResult[]
+  reads          ExamRead[]
+
+  @@index([organizationId, status])
+  @@index([teacherId, examDate])
+  @@index([classGroupId])
+  @@schema("edupilot")
+}
+
+/// 一名学生在一次考试中的成绩与个人评语。
+model ExamResult {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  examId         String
+  exam           Exam         @relation(fields: [examId], references: [id], onDelete: Cascade)
+  studentId      String
+  student        Student      @relation(fields: [studentId], references: [id])
+  /// 分数模式使用；缺考或未录入时为空。
+  score          Decimal?     @db.Decimal(6, 1)
+  /// 等级或合格/不合格文案。
+  gradeLabel     String?
+  absent         Boolean      @default(false)
+  /// 是否已由教师录入（含缺考）。未录入的结果发布后不对家长展示。
+  entered        Boolean      @default(false)
+  comment        String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([examId, studentId])
+  @@index([organizationId])
+  @@index([studentId])
+  @@schema("edupilot")
+}
+
+/// 家长第一次打开某次已发布考试中自己孩子的成绩。
+model ExamRead {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  examId         String
+  exam           Exam         @relation(fields: [examId], references: [id], onDelete: Cascade)
+  studentId      String
+  student        Student      @relation(fields: [studentId], references: [id])
+  parentUserId   String
+  parent         User         @relation(fields: [parentUserId], references: [id])
+  openedAt       DateTime     @default(now())
+
+  @@unique([examId, studentId, parentUserId])
+  @@index([organizationId])
   @@schema("edupilot")
 }
 

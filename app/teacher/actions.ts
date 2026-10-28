@@ -11,6 +11,8 @@ import { parseShanghaiDateTime } from "@/lib/datetime";
 import { convertAbsentToLeaveInTx, leaveKindLabel, toAttendanceFields } from "@/lib/leave-kind";
 import { cancelLessonRequest, submitLessonRequest } from "@/lib/lesson-requests";
 import { makeupLabel } from "@/lib/lesson-seat";
+import { resolveTeacherAddSeat } from "@/lib/lesson-seat-rules";
+import { createMakeupRow } from "@/lib/makeup";
 import { notifyMakeupArranged } from "@/lib/parent-notice";
 import { prisma } from "@/lib/prisma";
 import { parseMainlandPhone } from "@/lib/student-profile";
@@ -163,6 +165,7 @@ export async function saveAttendance(lessonId: string, formData: FormData): Prom
 
   revalidatePath("/teacher");
   revalidatePath("/teacher/schedule");
+  revalidatePath("/teacher/attendance");
   revalidatePath("/owner/schedule");
   revalidatePath("/owner/billing");
   revalidatePath("/parent/schedule");
@@ -183,6 +186,7 @@ export async function saveAttendance(lessonId: string, formData: FormData): Prom
 function refreshRoster() {
   revalidatePath("/teacher");
   revalidatePath("/teacher/schedule");
+  revalidatePath("/teacher/attendance");
   revalidatePath("/teacher/students");
   revalidatePath("/owner/schedule");
   revalidatePath("/owner/billing");
@@ -267,12 +271,25 @@ export async function addTeacherLessonStudent(lessonId: string, formData: FormDa
   });
   if (!student) return { ok: false, message: "只能加入本机构在读的学生。" };
   if (lesson.students.some((row) => row.studentId === student.id)) return { ok: false, message: "这名学生已经在这节课的名单里。" };
-  const enrolledHere = await prisma.enrollment.findFirst({
-    where: { organizationId: user.organizationId, studentId: student.id, classGroupId: lesson.classGroupId, student: { status: "ACTIVE" } },
-    select: { id: true },
-  });
-  const seat = enrolledHere ? "ENROLLED" : requested === "TRIAL" ? "TRIAL" : requested === "GUEST" ? "GUEST" : null;
-  if (!seat) return { ok: false, message: "不是本班学生时，请选择临时或试听。" };
+  let seat: "ENROLLED" | "GUEST" | "TRIAL";
+  let lastAction: string;
+  let forcedClass = false;
+  try {
+    const resolved = await resolveTeacherAddSeat(prisma, {
+      organizationId: user.organizationId,
+      studentId: student.id,
+      studentName: student.name,
+      courseId: lesson.courseId,
+      classGroupId: lesson.classGroupId,
+      requested,
+    });
+    seat = resolved.seat;
+    lastAction = resolved.lastAction;
+    forcedClass = resolved.forcedClass;
+  } catch (error) {
+    if (error instanceof CourseHourError) return { ok: false, message: error.message };
+    throw error;
+  }
   const overlap = await prisma.lessonSession.findFirst({
     where: {
       organizationId: user.organizationId,
@@ -302,7 +319,7 @@ export async function addTeacherLessonStudent(lessonId: string, formData: FormDa
         lessonSessionId: lesson.id,
         studentId: student.id,
         seat,
-        lastAction: seat === "TRIAL" ? "加入试听" : seat === "GUEST" ? "临时加入" : "加入课次",
+        lastAction,
       },
       select: { id: true },
     });
@@ -322,7 +339,7 @@ export async function addTeacherLessonStudent(lessonId: string, formData: FormDa
     throw error;
   }
   refreshRoster();
-  return { ok: true, message: enrolledHere && requested !== "ENROLLED" ? "这名学生属于本班，已按本班加入。" : "已加入这节课。" };
+  return { ok: true, message: forcedClass && requested !== "ENROLLED" ? "这名学生属于本班，已按本班加入。" : "已加入这节课。" };
 }
 
 export async function removeTeacherLessonStudent(lessonId: string, studentId: string): Promise<ActionResult> {
@@ -400,6 +417,7 @@ export async function convertAbsentToLeaveForMakeup(
     );
     revalidatePath("/teacher");
     revalidatePath("/teacher/schedule");
+    revalidatePath("/teacher/attendance");
     revalidatePath("/owner/attendance");
     revalidatePath("/owner/audit");
     revalidatePath("/parent/schedule");
@@ -450,6 +468,8 @@ export async function scheduleTeacherMakeup(sourceId: string, formData: FormData
       title: true,
       startAt: true,
       endAt: true,
+      classGroupId: true,
+      courseId: true,
       classroom: { select: { capacity: true, name: true } },
       students: { where: { studentId: source.studentId }, select: { id: true } },
       _count: { select: { students: true } },
@@ -480,28 +500,33 @@ export async function scheduleTeacherMakeup(sourceId: string, formData: FormData
     return { ok: false, warning: lines.join("\n") };
   }
   const when = makeupLabel(source.lessonSession.startAt).replace(/^补 /, "");
-  const created = await prisma.$transaction(async (tx) => {
-    const row = await tx.lessonStudent.create({
-      data: {
+  let created: string;
+  try {
+    created = await prisma.$transaction(async (tx) => {
+      const row = await createMakeupRow(tx, {
         organizationId: user.organizationId,
-        lessonSessionId: target.id,
+        targetLessonId: target.id,
+        classGroupId: target.classGroupId,
+        courseId: target.courseId,
         studentId: source.studentId,
-        seat: "GUEST",
-        makeupSourceId: source.id,
+        studentName: source.student.name,
+        sourceId: source.id,
         lastAction: `补 ${when}`,
-      },
-      select: { id: true },
+      });
+      await writeAudit(tx, {
+        organizationId: user.organizationId,
+        actorId: user.id,
+        action: "MAKEUP_SCHEDULED",
+        targetType: "LessonStudent",
+        targetId: row.id,
+        detail: `教师把${source.student.name}加入「${target.title ?? "课次"}」，补 ${when}`,
+      });
+      return row.id;
     });
-    await writeAudit(tx, {
-      organizationId: user.organizationId,
-      actorId: user.id,
-      action: "MAKEUP_SCHEDULED",
-      targetType: "LessonStudent",
-      targetId: row.id,
-      detail: `教师把${source.student.name}加入「${target.title ?? "课次"}」，补 ${when}`,
-    });
-    return row.id;
-  });
+  } catch (error) {
+    if (error instanceof CourseHourError) return { ok: false, message: error.message };
+    throw error;
+  }
   await notifyMakeupArranged({
     organizationId: user.organizationId,
     studentId: source.studentId,
@@ -576,34 +601,57 @@ export async function convertTeacherTrial(lessonStudentId: string, formData: For
   if (byPeriod && startDate && endDate && endDate.getTime() < startDate.getTime()) return { ok: false, message: "有效期结束时间不能早于开始时间。" };
   try {
     await prisma.$transaction(async (tx) => {
+      const { convertTrialSeatsForCourses, findCourseEnrollment } = await import("@/lib/trial-convert");
       await tx.student.update({ where: { id: seat.student.id }, data: { guardianPhone: phone.phone } });
-      const enrollment = await tx.enrollment.create({
-        data: {
-          organizationId: user.organizationId,
-          studentId: seat.student.id,
-          courseId: seat.lessonSession.courseId,
-          classGroupId: seat.lessonSession.classGroupId,
-          amountDue: new Prisma.Decimal(dueCents).dividedBy(100),
-          amount: new Prisma.Decimal(0),
-          discountPercent: discount.percent == null ? null : new Prisma.Decimal(discount.percent),
-          hoursAdded: byPeriod ? 0 : hours,
-          startDate: byPeriod ? startDate : null,
-          endDate: byPeriod ? endDate : null,
-          status: enrollmentStanding(dueCents, 0, discount.percent),
-          paidAt: null,
-          createdById: user.id,
-        },
-        select: { id: true },
+      const existing = await findCourseEnrollment(tx, {
+        organizationId: user.organizationId,
+        studentId: seat.student.id,
+        courseId: seat.lessonSession.courseId,
       });
+      let enrollmentId = existing?.id ?? null;
+      if (!existing) {
+        const enrollment = await tx.enrollment.create({
+          data: {
+            organizationId: user.organizationId,
+            studentId: seat.student.id,
+            courseId: seat.lessonSession.courseId,
+            classGroupId: seat.lessonSession.classGroupId,
+            amountDue: new Prisma.Decimal(dueCents).dividedBy(100),
+            amount: new Prisma.Decimal(0),
+            discountPercent: discount.percent == null ? null : new Prisma.Decimal(discount.percent),
+            hoursAdded: byPeriod ? 0 : hours,
+            startDate: byPeriod ? startDate : null,
+            endDate: byPeriod ? endDate : null,
+            status: enrollmentStanding(dueCents, 0, discount.percent),
+            paidAt: null,
+            createdById: user.id,
+          },
+          select: { id: true },
+        });
+        enrollmentId = enrollment.id;
+        if (!byPeriod) {
+          await creditCourseHours(tx, {
+            organizationId: user.organizationId,
+            studentId: seat.student.id,
+            courseId: seat.lessonSession.courseId,
+            hours,
+          });
+        }
+      } else if (existing.classGroupId !== seat.lessonSession.classGroupId) {
+        await tx.enrollment.update({
+          where: { id: existing.id },
+          data: { classGroupId: seat.lessonSession.classGroupId },
+        });
+      }
       await tx.classWaitlist.deleteMany({
         where: { organizationId: user.organizationId, studentId: seat.student.id, classGroupId: seat.lessonSession.classGroupId },
       });
-      if (paidCents > 0) {
+      if (paidCents > 0 && enrollmentId) {
         await recordPayment(tx, {
           organizationId: user.organizationId,
           actorId: user.id,
           actorName: teacher.name,
-          enrollmentId: enrollment.id,
+          enrollmentId,
           amountCents: paidCents,
           method: isPaymentMethod(payMethod) ? payMethod : "CASH",
           paidAt: new Date(),
@@ -611,19 +659,11 @@ export async function convertTeacherTrial(lessonStudentId: string, formData: For
           kind: "collect",
         });
       }
-      if (!byPeriod) {
-        await creditCourseHours(tx, {
-          organizationId: user.organizationId,
-          studentId: seat.student.id,
-          courseId: seat.lessonSession.courseId,
-          hours,
-        });
-      }
       const prior = await tx.renewalFollowUp.findFirst({
         where: { organizationId: user.organizationId, studentId: seat.student.id, courseId: seat.lessonSession.courseId, outcome: { not: "RENEWED" } },
         select: { id: true },
       });
-      if (prior) {
+      if (prior && !existing) {
         await tx.renewalFollowUp.create({
           data: {
             organizationId: user.organizationId,
@@ -635,17 +675,12 @@ export async function convertTeacherTrial(lessonStudentId: string, formData: For
           },
         });
       }
-      await tx.lessonStudent.update({
-        where: { id: seat.id },
-        data: { seat: "CONVERTED", lastAction: "试听转为报名" },
-      });
-      await writeAudit(tx, {
+      await convertTrialSeatsForCourses(tx, {
         organizationId: user.organizationId,
         actorId: user.id,
-        action: "TRIAL_CONVERTED",
-        targetType: "LessonStudent",
-        targetId: seat.id,
-        detail: `教师把试听「${seat.lessonSession.title ?? "课次"}」转为报名`,
+        studentId: seat.student.id,
+        courseIds: [seat.lessonSession.courseId],
+        detailPrefix: "教师把试听",
       });
     });
   } catch (error) {

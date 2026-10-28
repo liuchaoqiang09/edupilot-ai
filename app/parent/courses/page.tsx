@@ -15,6 +15,13 @@ function calendarDate(value: string | undefined) {
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day ? value : "";
 }
 
+/** 家长端用语：机构记「收款」，家长侧显示「付款」。 */
+function parentPaymentNote(reason: string | null | undefined, refund: boolean) {
+  const note = reason?.trim();
+  if (!note || note === "收款") return refund ? "退费" : "付款";
+  return note;
+}
+
 export default async function ParentCoursesPage({
   searchParams,
 }: {
@@ -71,7 +78,7 @@ export default async function ParentCoursesPage({
   return (
     <section>
       <h1 className="text-[28px] font-semibold tracking-tight">课时与费用</h1>
-      <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">只显示已绑定孩子报名过的课程，以及还没有报名、但已经排进课表的课程。按课时显示剩余节数，按周期显示有效期。待缴是折后应缴减去未作废的实收。下方流水含收款与退费，不作废记录不展示。</p>
+      <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">只显示已绑定孩子报名过的课程，以及还没有报名、但已经排进课表的课程。按课时显示剩余节数，按周期显示有效期。待缴是折后应缴减去未作废的实收。下方流水含付款与退费，不作废记录不展示。</p>
       <ParentChildFilter basePath="/parent/courses" childrenList={children} selectedId={studentId} extraParams={{ ...(from ? { from } : {}), ...(to ? { to } : {}) }} />
       {cards.length === 0 ? (
         <p className="mt-4 rounded-2xl border border-[var(--line)] bg-white px-5 py-12 text-center leading-7 text-[var(--muted)]">还没有报名记录。机构完成报名后，课时和费用会出现在这里。</p>
@@ -133,10 +140,10 @@ export default async function ParentCoursesPage({
                         <td className="px-4 py-4">{row.enrollment.course.name}</td>
                         <td className="px-4 py-4">{paymentMethodLabel[row.method]}</td>
                         <td className={`px-4 py-4 font-bold ${refund ? "text-[#b94d4d]" : "text-[#34725d]"}`}>
-                          {refund ? "退费 " : "收款 "}
+                          {refund ? "退费 " : "付款 "}
                           {formatYuan(Math.abs(cents))}
                         </td>
-                        <td className="px-4 py-4 text-[var(--muted)]">{row.reason?.trim() || (refund ? "退费" : "收款")}</td>
+                        <td className="px-4 py-4 text-[var(--muted)]">{parentPaymentNote(row.reason, refund)}</td>
                       </tr>
                     );
                   })}

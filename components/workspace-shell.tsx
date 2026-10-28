@@ -119,15 +119,14 @@ export function WorkspaceShell({
                 ✉
                 {noticeCount > 0 ? <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[var(--teal)] px-1 text-[10px] font-bold text-white">{noticeCount > 9 ? "9+" : noticeCount}</span> : null}
               </Link>
+            ) : area === "owner" ? (
+              <Link href="/owner/todos" title={t("待办中心", "To-do")} className="grid h-9 w-9 place-items-center rounded-[11px] border border-[var(--line)] bg-white text-[#51656a]">
+                ☑
+              </Link>
             ) : (
-              <button
-                type="button"
-                title={t("通知", "Notices")}
-                onClick={() => setNotice(t("目前没有新的系统通知", "There are no new notices."))}
-                className="grid h-9 w-9 place-items-center rounded-[11px] border border-[var(--line)] bg-white text-[#51656a]"
-              >
-                ♧
-              </button>
+              <Link href="/teacher" title={t("今日待办", "Today")} className="grid h-9 w-9 place-items-center rounded-[11px] border border-[var(--line)] bg-white text-[#51656a]">
+                ☑
+              </Link>
             )}
             <div className="relative">
               <button type="button" onClick={() => setMenuOpen((value) => !value)} className="flex items-center gap-2 bg-transparent text-left">
@@ -174,7 +173,9 @@ export function WorkspaceShell({
                     ) : null}
                     {!canSwitchTeacher && area === "teacher" ? <p className="text-xs leading-6 text-[var(--muted)]">{t("当前教师账号没有负责人权限。", "This teacher account does not have owner access.")}</p> : null}
                     {area === "parent" && !canSwitchParent ? <p className="text-xs leading-6 text-[var(--muted)]">{t("家长账号不能切换为负责人或教师。", "A parent account cannot switch to owner or teacher.")}</p> : null}
-                    <p className="rounded-[10px] bg-[#f7f8f4] px-3 py-2.5 text-xs text-[var(--muted)]">{t("绑定手机号即将上线", "Phone binding is not on this page yet.")}</p>
+                    <Link href="/account/phone" className="rounded-[10px] border border-[var(--line)] px-3 py-2.5 text-xs font-bold text-[#385058]">
+                      {t("绑定或更换手机号", "Bind or change phone")}
+                    </Link>
                     <LogoutButton />
                   </div>
                 </div>

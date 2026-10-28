@@ -6,6 +6,7 @@ import { requireRole } from "@/lib/auth";
 import { CourseHourError } from "@/lib/course-hours";
 import { formatMonthDay, shanghaiDateKey } from "@/lib/datetime";
 import { convertAbsentToLeaveInTx, leaveKindLabel } from "@/lib/leave-kind";
+import { createMakeupRow } from "@/lib/makeup";
 import { notifyMakeupArranged } from "@/lib/parent-notice";
 import { prisma } from "@/lib/prisma";
 
@@ -74,34 +75,46 @@ export async function scheduleMakeup(sourceId: string, formData: FormData): Prom
   if (already) return { ok: false, message: "这次请假已经安排过补课。" };
   const target = await prisma.lessonSession.findFirst({
     where: { id: targetLessonId, organizationId: user.organizationId, courseId: source.lessonSession.courseId, status: { not: "CANCELLED" } },
-    select: { id: true, title: true, startAt: true, students: { where: { studentId: source.studentId }, select: { id: true } } },
+    select: {
+      id: true,
+      title: true,
+      startAt: true,
+      classGroupId: true,
+      courseId: true,
+      students: { where: { studentId: source.studentId }, select: { id: true } },
+    },
   });
   if (!target) return { ok: false, message: "请选择同一门课、尚未取消的课次。" };
   if (target.id === source.lessonSession.id) return { ok: false, message: "不能补到原来请假的那一节。" };
   if (target.students.length > 0) return { ok: false, message: "这名学生已经在那节课的名单里。" };
   const when = formatMonthDay(shanghaiDateKey(source.lessonSession.startAt));
-  const created = await prisma.$transaction(async (tx) => {
-    const row = await tx.lessonStudent.create({
-      data: {
+  let created: string;
+  try {
+    created = await prisma.$transaction(async (tx) => {
+      const row = await createMakeupRow(tx, {
         organizationId: user.organizationId,
-        lessonSessionId: target.id,
+        targetLessonId: target.id,
+        classGroupId: target.classGroupId,
+        courseId: target.courseId,
         studentId: source.studentId,
-        seat: "GUEST",
-        makeupSourceId: source.id,
+        studentName: source.student.name,
+        sourceId: source.id,
         lastAction: `补 ${when}的请假`,
-      },
-      select: { id: true },
+      });
+      await writeAudit(tx, {
+        organizationId: user.organizationId,
+        actorId: user.id,
+        action: "MAKEUP_SCHEDULED",
+        targetType: "LessonStudent",
+        targetId: row.id,
+        detail: `把${source.student.name}加入「${target.title ?? "课次"}」，补 ${when}的请假`,
+      });
+      return row.id;
     });
-    await writeAudit(tx, {
-      organizationId: user.organizationId,
-      actorId: user.id,
-      action: "MAKEUP_SCHEDULED",
-      targetType: "LessonStudent",
-      targetId: row.id,
-      detail: `把${source.student.name}加入「${target.title ?? "课次"}」，补 ${when}的请假`,
-    });
-    return row.id;
-  });
+  } catch (error) {
+    if (error instanceof CourseHourError) return { ok: false, message: error.message };
+    throw error;
+  }
   await notifyMakeupArranged({
     organizationId: user.organizationId,
     studentId: source.studentId,

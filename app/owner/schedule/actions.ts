@@ -8,6 +8,8 @@ import { calendarDateKey, CourseHourError, periodValidity, releaseChargedHour } 
 import { requireRole } from "@/lib/auth";
 import { formatClock, formatDateTime, formatMonthDay, parseShanghaiDateTime, shanghaiDateKey } from "@/lib/datetime";
 import { findScheduleConflicts, recurringConflictMessage, roomCapacityWarning, singleConflictWarning, type ExistingLesson } from "@/lib/lesson-conflicts";
+import { resolveLessonSeat } from "@/lib/lesson-seat-rules";
+import { assertLeaveRemovable } from "@/lib/makeup";
 import { cancelPendingLessonRequests, reviewLessonRequest } from "@/lib/lesson-requests";
 import { notifyLessonChange } from "@/lib/parent-notice";
 import { prisma } from "@/lib/prisma";
@@ -226,7 +228,7 @@ export async function createLesson(formData: FormData): Promise<ActionResult> {
   const students = studentIds.length
     ? await prisma.student.findMany({
         where: { id: { in: studentIds }, organizationId: user.organizationId, status: "ACTIVE" },
-        select: { id: true },
+        select: { id: true, name: true },
       })
     : [];
   if (students.length !== studentIds.length) {
@@ -237,6 +239,24 @@ export async function createLesson(formData: FormData): Promise<ActionResult> {
     select: { id: true, name: true, capacity: true },
   });
   if (!classroom) return { ok: false, fieldErrors: { classroomId: "只能选择本机构可用的教室。" } };
+
+  const seatRows: { studentId: string; seat: "ENROLLED" | "GUEST" | "TRIAL"; lastAction: string }[] = [];
+  try {
+    for (const student of students) {
+      const resolved = await resolveLessonSeat(prisma, {
+        organizationId: user.organizationId,
+        studentId: student.id,
+        studentName: student.name,
+        courseId: classGroup.courseId,
+        classGroupId: classGroup.id,
+        requested: clean(formData.get(`seat:${student.id}`)),
+      });
+      seatRows.push({ studentId: student.id, seat: resolved.seat, lastAction: resolved.lastAction });
+    }
+  } catch (error) {
+    if (error instanceof CourseHourError) return { ok: false, fieldErrors: { students: error.message } };
+    throw error;
+  }
 
   const conflicts = findScheduleConflicts(
     { teacherId: teacher.id, classGroupId: classGroup.id, location: classroom.name, classroomId: classroom.id, studentIds: students.map((student) => student.id), startAt: startAt!, endAt: endAt! },
@@ -266,16 +286,12 @@ export async function createLesson(formData: FormData): Promise<ActionResult> {
       classroomId: classroom.id,
       createdById: user.id,
       students: {
-        create: students.map((student) => {
-          const requested = clean(formData.get(`seat:${student.id}`));
-          const seat = requested === "TRIAL" || requested === "GUEST" ? requested : "ENROLLED";
-          return {
-            organizationId: user.organizationId,
-            studentId: student.id,
-            seat,
-            lastAction: seat === "TRIAL" ? "加入试听" : seat === "GUEST" ? "临时加入" : "加入课次",
-          };
-        }),
+        create: seatRows.map((row) => ({
+          organizationId: user.organizationId,
+          studentId: row.studentId,
+          seat: row.seat,
+          lastAction: row.lastAction,
+        })),
       },
     },
   });
@@ -345,7 +361,7 @@ export async function createRecurringLessons(formData: FormData): Promise<Recurr
   const students = studentIds.length
     ? await prisma.student.findMany({
         where: { id: { in: studentIds }, organizationId: user.organizationId, status: "ACTIVE" },
-        select: { id: true },
+        select: { id: true, name: true },
       })
     : [];
   if (students.length !== studentIds.length) {
@@ -356,6 +372,27 @@ export async function createRecurringLessons(formData: FormData): Promise<Recurr
     select: { id: true, name: true, capacity: true },
   });
   if (!classroom) return { ok: false, created: 0, skipped: 0, fieldErrors: { classroomId: "只能选择本机构可用的教室。" } };
+
+  const seatRows: { studentId: string; seat: "ENROLLED" | "GUEST" | "TRIAL"; lastAction: string }[] = [];
+  try {
+    for (const student of students) {
+      const resolved = await resolveLessonSeat(prisma, {
+        organizationId: user.organizationId,
+        studentId: student.id,
+        studentName: student.name,
+        courseId: classGroup.courseId,
+        classGroupId: classGroup.id,
+        requested: clean(formData.get(`seat:${student.id}`)),
+      });
+      seatRows.push({ studentId: student.id, seat: resolved.seat, lastAction: resolved.lastAction });
+    }
+  } catch (error) {
+    if (error instanceof CourseHourError) {
+      return { ok: false, created: 0, skipped: 0, fieldErrors: { students: error.message } };
+    }
+    throw error;
+  }
+
   const seats = roomCapacityWarning(students.length, classroom.capacity, classroom.name);
   if (seats && formData.get("acknowledgeCapacity") !== "1") {
     return { ok: false, created: 0, skipped: 0, needsCapacityConfirm: true, message: `${seats}确认后仍会生成这些课次。` };
@@ -421,19 +458,15 @@ export async function createRecurringLessons(formData: FormData): Promise<Recurr
       })),
       select: { id: true },
     });
-    if (students.length > 0) {
+    if (seatRows.length > 0) {
       await tx.lessonStudent.createMany({
-        data: created.flatMap((lesson) => students.map((student) => {
-          const requested = clean(formData.get(`seat:${student.id}`));
-          const seat = requested === "TRIAL" || requested === "GUEST" ? requested : "ENROLLED";
-          return {
-            organizationId: user.organizationId,
-            lessonSessionId: lesson.id,
-            studentId: student.id,
-            seat,
-            lastAction: seat === "TRIAL" ? "加入试听" : seat === "GUEST" ? "临时加入" : "加入课次",
-          };
-        })),
+        data: created.flatMap((lesson) => seatRows.map((row) => ({
+          organizationId: user.organizationId,
+          lessonSessionId: lesson.id,
+          studentId: row.studentId,
+          seat: row.seat,
+          lastAction: row.lastAction,
+        }))),
       });
     }
   }, { timeout: 20000 });
@@ -519,6 +552,7 @@ export async function removeLessonStudent(lessonId: string, studentId: string): 
 
   try {
     await prisma.$transaction(async (tx) => {
+      await assertLeaveRemovable(tx, row.id);
       const refunded = await releaseChargedHour(tx, {
         organizationId: user.organizationId,
         lessonStudentId: row.id,

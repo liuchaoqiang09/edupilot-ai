@@ -61,7 +61,7 @@ export async function POST(request: Request) {
 
   const organization = await prisma.organization.findUnique({
     where: { id: user.organizationId },
-    select: { reportLanguage: true, aiUseRecentSummaries: true, aiTeacherMustConfirm: true },
+    select: { reportLanguage: true, aiUseRecentSummaries: true, aiTeacherMustConfirm: true, aiRequireEvidence: true },
   });
   const settings = readOrgReportSettings(organization);
   const names = lesson.students.map((row) => row.student.name);
@@ -93,6 +93,7 @@ export async function POST(request: Request) {
           generateLessonAnalysis({
             language: settings.reportLanguage,
             useRecentSummaries: settings.aiUseRecentSummaries,
+            requireEvidence: settings.aiRequireEvidence,
             history,
             lessonContent: teachingRecord.lessonContent,
             studentPerformance: teachingRecord.studentPerformance,

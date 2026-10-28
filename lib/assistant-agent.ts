@@ -14,6 +14,7 @@ import { publishReportByTeacher } from "@/lib/report-flow";
 import { reportStatusLabel } from "@/lib/report-labels";
 import { executeOperation, executeTools, lookupTools, operationWrites, previewOperation, routeExecute, runOperationRead } from "@/lib/assistant-ops";
 import { landForUtterance, locateWork, openExactTool, queueIntent, resolveExactPlace, screenIntent, screenStudentsTool } from "@/lib/assistant-places";
+import { assertAssistantMayExecute, assistantForbiddenMessage } from "@/lib/assistant-policy";
 
 export const assistantTimeoutMessage = "小星助教思考超时，请稍后再试";
 
@@ -168,7 +169,8 @@ async function answerAndOpen(actor: Actor, text: string, content: string): Promi
 function pageFor(area: Area, tool: string) {
   const owner = area === "owner";
   if (["create_enrollment", "record_payment", "adjust_student_hours", "add_follow_up", "stop_enrollment"].includes(tool)) return owner ? "/owner/billing" : "/teacher";
-  if (["create_lesson", "schedule_recurring_lessons", "mark_attendance", "change_lesson_time", "change_lesson_classroom", "change_lesson_teacher", "cancel_lesson", "make_up_lesson", "add_lesson_student"].includes(tool)) return owner ? "/owner/schedule" : "/teacher/schedule";
+  if (["create_lesson", "schedule_recurring_lessons", "change_lesson_time", "change_lesson_classroom", "change_lesson_teacher", "cancel_lesson", "make_up_lesson", "add_lesson_student"].includes(tool)) return owner ? "/owner/schedule" : "/teacher/schedule";
+  if (tool === "mark_attendance") return owner ? "/owner/schedule" : "/teacher/attendance";
   if (["generate_ai_report", "publish_report", "return_report"].includes(tool)) return owner ? "/owner/reports" : "/teacher/reports";
   if (tool.startsWith("create_student") || tool.includes("student") || tool === "bind_parent" || tool === "update_student" || tool === "set_student_status") return owner ? "/owner/students" : "/teacher/students";
   if (tool.includes("teacher") || tool === "assign_course_to_teacher" || tool === "issue_teacher_invite") return "/owner/teachers";
@@ -598,7 +600,8 @@ async function previewWrite(actor: Actor, name: string, args: Record<string, unk
 }
 
 async function runTool(actor: Actor, name: string, args: Record<string, unknown>) {
-  if (/delete|remove|drop|销毁/i.test(name) || name.includes("删除")) return "不能通过小星助教删除数据。";
+  const gate = assertAssistantMayExecute(name, args);
+  if (!gate.ok) return gate.message;
   if (name === "get_overdue_students") return overdueStudents(actor);
   if (name === "search_student") return searchStudent(actor, typeof args.name === "string" ? args.name : "");
   if (name === "get_student_recent_reports") return recentReports(actor, typeof args.studentId === "string" ? args.studentId : "");
@@ -778,29 +781,23 @@ export async function executeAssistant(actor: Actor, token: string) {
   if (!payload || payload.userId !== actor.id || payload.organizationId !== actor.organizationId || payload.area !== actor.area || payload.teacherId !== actor.teacherId) {
     return { ok: false as const, message: "这次确认已过期或无效，没有写入。" };
   }
+  const gate = assertAssistantMayExecute(payload.tool, payload.args);
+  if (!gate.ok) return { ok: false as const, message: gate.message };
   if (operationWrites.has(payload.tool)) {
     const again = await previewOperation(actor, payload.tool, payload.args);
     if (!again.ok) return { ok: false as const, message: again.message };
     return executeOperation(actor, payload.tool, again.args);
   }
-  if (payload.tool === "adjust_student_hours" || payload.tool === "publish_report") {
+  if (payload.tool === "adjust_student_hours") {
+    return { ok: false as const, message: assistantForbiddenMessage("finance") };
+  }
+  if (payload.tool === "publish_report") {
     const again = await previewWrite(actor, payload.tool, payload.args);
     if (!again.ok) return { ok: false as const, message: again.message };
   }
   try {
     if (payload.tool === "adjust_student_hours") {
-      const deltaHours = Number(payload.args.deltaHours);
-      await prisma.$transaction((tx) => adjustLessonHours(tx, {
-        organizationId: actor.organizationId,
-        actorId: actor.id,
-        actorName: actor.name,
-        studentId: String(payload.args.studentId),
-        courseId: String(payload.args.courseId),
-        deltaHours,
-        reason: String(payload.args.reason),
-      }));
-      refreshAssistant();
-      return { ok: true as const, message: `已调整课时：${deltaHours > 0 ? "增加" : "减少"} ${Math.abs(deltaHours)} 节。` };
+      return { ok: false as const, message: assistantForbiddenMessage("finance") };
     }
     if (payload.tool === "create_lesson") {
       const classGroup = await prisma.classGroup.findFirst({

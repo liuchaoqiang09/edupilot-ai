@@ -5,7 +5,7 @@ import { makeupLabel } from "@/lib/lesson-seat";
 import { safeParentHref } from "@/lib/parent-scope";
 import { prisma } from "@/lib/prisma";
 
-type NoticeKind = "LESSON" | "HOMEWORK" | "REPORT" | "MAKEUP";
+type NoticeKind = "LESSON" | "HOMEWORK" | "REPORT" | "MAKEUP" | "EXAM";
 
 function refreshParent() {
   revalidatePath("/parent");
@@ -13,6 +13,7 @@ function refreshParent() {
   revalidatePath("/parent/schedule");
   revalidatePath("/parent/homework");
   revalidatePath("/parent/reports");
+  revalidatePath("/parent/exams");
 }
 
 export async function notifyLinkedParents(input: {

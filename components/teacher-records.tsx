@@ -16,6 +16,7 @@ type RecordDraft = {
   studentPerformance: string;
   difficulties: string;
   homework: string;
+  homeworkDueAt: string;
   teacherPrivateNote: string;
 };
 
@@ -30,6 +31,7 @@ function readDraft(lessonId: string): RecordDraft | null {
       studentPerformance: String(value.studentPerformance ?? ""),
       difficulties: String(value.difficulties ?? ""),
       homework: String(value.homework ?? ""),
+      homeworkDueAt: String(value.homeworkDueAt ?? ""),
       teacherPrivateNote: String(value.teacherPrivateNote ?? ""),
     };
   } catch {
@@ -60,6 +62,7 @@ function draftFromForm(form: HTMLFormElement): RecordDraft {
     studentPerformance: String(data.get("studentPerformance") ?? ""),
     difficulties: String(data.get("difficulties") ?? ""),
     homework: String(data.get("homework") ?? ""),
+    homeworkDueAt: String(data.get("homeworkDueAt") ?? ""),
     teacherPrivateNote: String(data.get("teacherPrivateNote") ?? ""),
   };
 }
@@ -76,6 +79,7 @@ export type RecordLesson = {
     studentPerformance: string;
     difficulties: string;
     homework: string;
+    homeworkDueAt: string;
     teacherPrivateNote: string;
   } | null;
   reports: {
@@ -154,6 +158,7 @@ export function TeacherRecords({
       local.studentPerformance === (server.studentPerformance ?? "") &&
       local.difficulties === (server.difficulties ?? "") &&
       local.homework === (server.homework ?? "") &&
+      local.homeworkDueAt === (server.homeworkDueAt ?? "") &&
       local.teacherPrivateNote === (server.teacherPrivateNote ?? "");
     if (sameAsServer) {
       clearDraft(selectedId);
@@ -161,7 +166,7 @@ export function TeacherRecords({
     }
     for (const [name, value] of Object.entries(local) as [keyof RecordDraft, string][]) {
       const field = form.elements.namedItem(name);
-      if (field instanceof HTMLTextAreaElement) field.value = value;
+      if (field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement) field.value = value;
     }
     setDirty(true);
     setMessage("已从本机草稿恢复未保存内容。请核对后点保存。");
@@ -329,8 +334,12 @@ export function TeacherRecords({
                 <label className="grid gap-1.5 text-xs font-bold">学生表现<textarea name="studentPerformance" rows={3} maxLength={RECORD_LIMIT} defaultValue={selected.record?.studentPerformance ?? ""} className={fieldClass} /></label>
                 <label className="grid gap-1.5 text-xs font-bold">遇到的问题<textarea name="difficulties" rows={3} maxLength={RECORD_LIMIT} defaultValue={selected.record?.difficulties ?? ""} className={fieldClass} /></label>
                 <label className="grid gap-1.5 text-xs font-bold">作业
-                  <span className="font-medium text-[var(--muted)]">保存后，这节课名单上的家长就能在「作业」里看到，不用等报告发布。每项最多 {RECORD_LIMIT} 字。</span>
+                  <span className="font-medium text-[var(--muted)]">保存后，这节课名单上的家长就能在「作业」里查看详情并提交；教师在「作业批改」里批改。每项最多 {RECORD_LIMIT} 字。</span>
                   <textarea name="homework" rows={2} maxLength={RECORD_LIMIT} defaultValue={selected.record?.homework ?? ""} className={fieldClass} />
+                </label>
+                <label className="grid gap-1.5 text-xs font-bold">作业截止（可选）
+                  <span className="font-medium text-[var(--muted)]">按上海时间。超过截止且未提交或已退回会标「已逾期」。</span>
+                  <input type="datetime-local" name="homeworkDueAt" defaultValue={selected.record?.homeworkDueAt ?? ""} className={fieldClass} />
                 </label>
                 <label className="grid gap-1.5 text-xs font-bold">内部备注
                   <span className="font-medium text-[#9a6729]">仅教师和机构负责人可见，不会写入报告，也不会发给 AI。</span>

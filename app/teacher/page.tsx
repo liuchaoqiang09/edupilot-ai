@@ -43,7 +43,7 @@ export default async function TeacherHomePage() {
       <div className="mt-6">
         <StatCards
           items={[
-            { label: "今日课次", value: snapshot.todayLessons, hint: "打开本周课表。", href: "/teacher/schedule" },
+            { label: "今日课次", value: snapshot.todayLessons, hint: "打开今日学生签到。", href: "/teacher/attendance?tab=today" },
             { label: "待填写记录", value: snapshot.pendingRecordCount, hint: snapshot.pendingRecordCount === 0 ? "已结束的课次都已保存记录。" : "已结束但还没有教学记录。点下面的一节直接打开。", href: "/teacher/records" },
             { label: "待确认报告", value: snapshot.pendingReports, hint: "草稿、已确认待发布和已退回的报告还需要教师处理。", href: "/teacher/reports" },
             { label: "本月已上", value: taughtThisMonth, hint: `${Number(monthText)}月已结束 ${taughtThisMonth} 节，还有 ${remainingThisMonth} 节未结束。只计节数。`, href: "/teacher/schedule" },
@@ -58,7 +58,7 @@ export default async function TeacherHomePage() {
           <ul className="mt-3">
             {todayLessons.map((lesson) => (
               <li key={lesson.id} className="border-b border-[#eef1ee] py-3 last:border-b-0">
-                <Link href={`/teacher/schedule?view=day&date=${today}&lesson=${lesson.id}`} className="block text-sm hover:text-[var(--teal)]">
+                <Link href={`/teacher/attendance?tab=today&lesson=${lesson.id}`} className="block text-sm hover:text-[var(--teal)]">
                   <div className="font-bold">{formatClock(lesson.startAt)} {lesson.course.name} · {lesson.title ?? "课次"}</div>
                   <div className="mt-1 text-xs text-[var(--muted)]">
                     {lesson.classroom?.name || lesson.location || "地点待定"}

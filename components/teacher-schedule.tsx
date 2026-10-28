@@ -411,9 +411,11 @@ export function TeacherSchedule({
                   <div className="mt-1 text-[11px] text-[var(--muted)]">{lesson.courseName} · {lesson.students.length} 人 · {lesson.location ?? "地点待定"}{lesson.status === "CANCELLED" ? ` · ${lessonStatusLabel.CANCELLED}` : ""}{lesson.students.some((student) => student.parentLeave) ? ` · 家长请假 ${lesson.students.filter((student) => student.parentLeave).length} 人` : ""}</div>
                   {lesson.students.some((student) => student.inactive) ? <div className="mt-1 text-[11px] font-bold text-[#74838b]">该课次包含已停用学生</div> : null}
                 </div>
-                <button type="button" onClick={() => openLesson(lesson)} className="text-xs font-bold text-[var(--teal)]">
-                  {lesson.status === "CANCELLED" ? "查看" : "记录考勤"}
-                </button>
+                {lesson.status === "CANCELLED" ? (
+                  <button type="button" onClick={() => openLesson(lesson)} className="text-xs font-bold text-[var(--teal)]">查看</button>
+                ) : (
+                  <Link href={`/teacher/attendance?tab=day&date=${lesson.dateKey}&lesson=${lesson.id}`} className="text-xs font-bold text-[var(--teal)]">学生签到</Link>
+                )}
               </li>
               );
             })}

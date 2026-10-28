@@ -186,7 +186,7 @@ export function LessonRosterPicker({
       <p className="text-xs leading-6 text-[var(--muted)]">
         {mode === "class"
           ? "默认只列出这个班的在读学生，并已全部勾选。今天请假的人取消勾选即可。"
-          : "输入姓名或编号查找本班以外的学生。勾选后选择「临时」或「试听」。试听不扣课时。"}
+          : "输入姓名或编号查找本班以外的学生。勾选后选择「临时」或「试听」。同课程不同班请用临时（跨班/合班）；未报名只能选试听。试听不扣课时。"}
       </p>
       {mode === "other" ? (
         <div className="overflow-hidden rounded-[10px] border border-[var(--line)] bg-white">

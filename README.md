@@ -31,6 +31,14 @@ npm run dev
 
 可选：只在开发环境、并且 `.env` 里 `SEED_ENABLED=true` 时，运行 `npm run db:seed` 创建演示机构。生产环境保持 `SEED_ENABLED=false`。
 
+运行自动化测试（核心套件更快）：
+
+```bash
+npm.cmd run test:core
+```
+
+全量测试：`npm.cmd run test`。小星助教可主动办理教务与教学，但不能主动删除、收款/退费/调课时，或改账号邀请与绑定；详见 `PRODUCT_SPEC.md` 第 1.5 节。
+
 ## 环境变量
 
 变量说明以 `.env.example` 为准。需要填写的是：

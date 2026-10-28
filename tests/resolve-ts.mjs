@@ -10,6 +10,15 @@ if (!process.env.EDUPILOT_TS_LOADER) {
 }
 
 export async function resolve(specifier, context, nextResolve) {
+  if (specifier === "next/cache" || specifier === "next/cache.js") {
+    return { shortCircuit: true, url: pathToFileURL(path.join(root, "tests/stubs/next-cache.mjs")).href };
+  }
+  if (specifier === "next/headers" || specifier === "next/headers.js") {
+    return { shortCircuit: true, url: pathToFileURL(path.join(root, "tests/stubs/next-headers.mjs")).href };
+  }
+  if (specifier === "next/navigation" || specifier === "next/navigation.js") {
+    return { shortCircuit: true, url: pathToFileURL(path.join(root, "tests/stubs/next-navigation.mjs")).href };
+  }
   if (specifier.startsWith("@/")) {
     const file = pathToFileURL(path.join(root, specifier.slice(2))).href;
     const withExtension = /\.(?:[cm]?js|json|node|ts)$/.test(file) ? file : `${file}.ts`;
