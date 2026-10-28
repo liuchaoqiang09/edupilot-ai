@@ -513,7 +513,15 @@ export async function landForUtterance(actor: Actor, text: string) {
   if (/报名/.test(compact)) {
     return { href: student ? stamp(`/owner/billing?form=enroll&who=${student.id}`) : stamp("/owner/billing?form=enroll") };
   }
-  if (student && /课时|收款|续费|欠费/.test(compact)) return { href: `/owner/billing?who=${student.id}&focus=${encodeURIComponent(student.id)}` };
+  if (/收入|实收|收款流水|本月收|赚了多少|营收/.test(compact)) return { href: "/owner/billing" };
+  if (/收款|退费|交费|缴费|调课时|收\d|交\d|收.+元|交.+元|帮.+收/.test(compact)) {
+    return {
+      href: student
+        ? stamp(`/owner/billing?form=pay&who=${student.id}`)
+        : stamp("/owner/billing?form=pay"),
+    };
+  }
+  if (student && /课时|续费|欠费/.test(compact)) return { href: `/owner/billing?who=${student.id}&focus=${encodeURIComponent(student.id)}` };
   if (student && /报告/.test(compact)) return { href: `/owner/reports?all=1&q=${encodeURIComponent(student.name)}` };
   if (student && /出勤|考勤|点名/.test(compact)) return { href: `/owner/attendance?range=last7days&q=${encodeURIComponent(student.name)}` };
   if (/调课|课次|课表|排课/.test(compact)) {

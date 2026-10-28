@@ -25,7 +25,8 @@ export async function assertLeaveRemovable(db: Db, lessonStudentId: string) {
 }
 
 /**
- * 补课座位：按临时规则校验（须已报名该课程）；试听请假无法按临时补时抛错。
+ * 补课座位：请假原是试听 → 补课仍试听（不要求报名）；
+ * 已报名 → 按临时加入；未报名且非试听请假 → 明确报错。
  */
 export async function resolveMakeupSeat(
   db: Db,
@@ -35,8 +36,12 @@ export async function resolveMakeupSeat(
     studentName: string;
     courseId: string;
     classGroupId: string;
+    sourceSeat?: "ENROLLED" | "GUEST" | "TRIAL" | "CONVERTED" | null;
   },
 ) {
+  if (input.sourceSeat === "TRIAL") {
+    return resolveLessonSeat(db, { ...input, requested: "TRIAL" });
+  }
   return resolveLessonSeat(db, { ...input, requested: "GUEST" });
 }
 
@@ -51,6 +56,7 @@ export async function createMakeupRow(
     studentName: string;
     sourceId: string;
     lastAction: string;
+    sourceSeat?: "ENROLLED" | "GUEST" | "TRIAL" | "CONVERTED" | null;
   },
 ) {
   await assertMakeupSourceAvailable(db, input.organizationId, input.sourceId);
@@ -60,6 +66,7 @@ export async function createMakeupRow(
     studentName: input.studentName,
     courseId: input.courseId,
     classGroupId: input.classGroupId,
+    sourceSeat: input.sourceSeat,
   });
   return db.lessonStudent.create({
     data: {

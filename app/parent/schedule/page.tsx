@@ -124,7 +124,7 @@ export default async function ParentSchedulePage({
             <section key={day} className="overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
               <div className="flex items-center justify-between gap-3 border-b border-[#eef1ee] px-5 py-3">
                 <h2 className="text-sm font-semibold">{formatDateLabel(day)}</h2>
-                <Link href={`/parent/schedule?view=day&date=${day}`} className="text-xs font-bold text-[var(--teal)]">看这一天</Link>
+                <Link href={`/parent/schedule?view=day&date=${day}${studentQuery}`} className="text-xs font-bold text-[var(--teal)]">看这一天</Link>
               </div>
               <DayList rows={visibleRows.filter((row) => shanghaiDateKey(row.lessonSession.startAt) === day)} now={now} empty="这一天没有课。" plain />
             </section>

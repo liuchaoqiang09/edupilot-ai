@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { formatDateTime, shanghaiDateKey } from "@/lib/datetime";
 import { makeupLabel } from "@/lib/lesson-seat";
+import { inferOccurredAtFromBody } from "@/lib/parent-notices-ui";
 import { safeParentHref } from "@/lib/parent-scope";
 import { prisma } from "@/lib/prisma";
 
@@ -24,6 +25,8 @@ export async function notifyLinkedParents(input: {
   body: string;
   href: string;
   dedupeKey: string;
+  /** 列表排序用的业务时间；缺省用当前送达时间。 */
+  occurredAt?: Date;
 }) {
   const ids = [...new Set(input.studentIds.filter(Boolean))];
   const href = safeParentHref(input.href, "");
@@ -39,6 +42,7 @@ export async function notifyLinkedParents(input: {
     byParent.set(link.parentUserId, names);
   }
   if (byParent.size === 0) return;
+  const occurredAt = input.occurredAt ?? new Date();
   await prisma.parentNotice.createMany({
     data: [...byParent].map(([parentUserId, names]) => ({
       organizationId: input.organizationId,
@@ -48,6 +52,7 @@ export async function notifyLinkedParents(input: {
       body: `${names.join("、")}：${input.body}`,
       href,
       dedupeKey: input.dedupeKey,
+      occurredAt,
     })),
     skipDuplicates: true,
   });
@@ -71,6 +76,7 @@ export async function notifyLessonChange(input: {
     body: `${formatDateTime(input.when)}的「${name}」${input.change}`,
     href: `/parent/schedule?view=day&date=${shanghaiDateKey(input.when)}`,
     dedupeKey: input.dedupeKey,
+    occurredAt: input.when,
   });
 }
 
@@ -91,6 +97,7 @@ export async function notifyMakeupArranged(input: {
     body: `${makeupLabel(input.sourceStart)}，补课是 ${formatDateTime(input.targetStart)} 的「${name}」`,
     href: `/parent/schedule?view=day&date=${shanghaiDateKey(input.targetStart)}`,
     dedupeKey: `makeup:${input.lessonStudentId}`,
+    occurredAt: input.targetStart,
   });
 }
 
@@ -119,6 +126,7 @@ export async function notifyHomeworkSaved(input: {
     body: `${formatDateTime(input.when)}的「${name}」布置了作业`,
     href: "/parent/homework",
     dedupeKey: homeworkKey(input.lessonId, next),
+    occurredAt: input.when,
   });
 }
 
@@ -136,7 +144,23 @@ export async function notifyReportPublished(input: {
     kind: "REPORT",
     title: "教学报告已发布",
     body: `${formatDateTime(input.when)}的${input.courseName}报告可以查看`,
-    href: "/parent/reports",
+    href: `/parent/reports?focus=${input.reportId}`,
     dedupeKey: `report:${input.reportId}:${input.publishedAt.toISOString()}`,
+    occurredAt: input.when,
   });
+}
+
+/** 用正文里的业务日期回填历史消息的 occurredAt。 */
+export async function backfillNoticeOccurredAt() {
+  const rows = await prisma.parentNotice.findMany({
+    select: { id: true, body: true, createdAt: true, occurredAt: true },
+  });
+  let updated = 0;
+  for (const row of rows) {
+    const next = inferOccurredAtFromBody(row.body, row.createdAt);
+    if (next.getTime() === row.occurredAt.getTime()) continue;
+    await prisma.parentNotice.update({ where: { id: row.id }, data: { occurredAt: next } });
+    updated += 1;
+  }
+  return updated;
 }

@@ -46,7 +46,7 @@ export async function GET(_: Request, context: { params: Promise<{ id: string }>
     } catch {
       bytes = await readFile(homeworkAssetPath(asset.id, asset.contentType));
     }
-    return new Response(bytes, {
+    return new Response(new Uint8Array(bytes), {
       headers: {
         "content-type": asset.contentType,
         "content-disposition": `inline; filename*=UTF-8''${encodeURIComponent(asset.fileName)}`,

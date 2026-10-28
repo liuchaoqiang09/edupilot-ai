@@ -209,6 +209,10 @@ export async function saveExamResults(input: {
         ? `${input.actorName}发布考试「${exam.title}」成绩`
         : `${input.actorName}保存考试「${exam.title}」草稿`,
     });
+    // 再发布后家长需重新打开才算已读，避免旧已读掩盖新成绩。
+    if (input.publish) {
+      await tx.examRead.deleteMany({ where: { organizationId: input.organizationId, examId: exam.id } });
+    }
   });
 
   if (input.publish) {
@@ -222,6 +226,7 @@ export async function saveExamResults(input: {
       body: `${when}「${exam.title}」的成绩可以查看`,
       href: `/parent/exams/${exam.id}`,
       dedupeKey: `exam:${exam.id}:r${exam.revision + 1}:${now.toISOString()}`,
+      occurredAt: exam.examDate,
     });
   }
 

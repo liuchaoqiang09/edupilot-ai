@@ -1,8 +1,29 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CourseHourError } from "../lib/course-hours.ts";
-import { assertLeaveRemovable, assertMakeupSourceAvailable } from "../lib/makeup.ts";
+import { assertLeaveRemovable, assertMakeupSourceAvailable, resolveMakeupSeat } from "../lib/makeup.ts";
 import { prisma } from "../lib/prisma.ts";
+
+test("试听请假补课按试听座位，不要求已报名", async () => {
+  const trial = await prisma.lessonStudent.findFirst({
+    where: { seat: "TRIAL", attendanceStatus: "LEAVE", student: { status: "ACTIVE" } },
+    select: {
+      studentId: true,
+      student: { select: { name: true } },
+      lessonSession: { select: { organizationId: true, courseId: true, classGroupId: true } },
+    },
+  });
+  if (!trial) return;
+  const seat = await resolveMakeupSeat(prisma, {
+    organizationId: trial.lessonSession.organizationId,
+    studentId: trial.studentId,
+    studentName: trial.student.name,
+    courseId: trial.lessonSession.courseId,
+    classGroupId: trial.lessonSession.classGroupId,
+    sourceSeat: "TRIAL",
+  });
+  assert.equal(seat.seat, "TRIAL");
+});
 
 test("P2 补课唯一：同一请假不能二次安排；已补请假不可移出", async () => {
   const source = await prisma.lessonStudent.findFirst({

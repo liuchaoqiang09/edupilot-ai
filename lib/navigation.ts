@@ -45,7 +45,7 @@ const navigationCopy: Record<WorkspaceArea, Array<NavItem & { labelEn: string; d
     { href: "/owner/billing", label: "报名与课时", labelEn: "Enrollment", icon: "¥", description: "记录报名、实收金额和剩余课时。出勤、迟到或缺勤会扣减课时。", descriptionEn: "Enrollment, payments, and remaining hours." },
     { href: "/owner/audit", label: "操作记录", labelEn: "Activity", icon: "☰", description: "查看课时调整、收款、退费和作废是谁在什么时候做的。", descriptionEn: "Who changed hours, payments, refunds, and voids." },
     { href: "/owner/stats", label: "基础统计", labelEn: "Statistics", icon: "▤", description: "查看出勤、课次和报告完成情况。数字只来自数据库。", descriptionEn: "Attendance, lessons, and report progress from this organization's data." },
-    { href: "/owner/settings", label: "机构设置", labelEn: "Settings", icon: "⚙", description: "维护机构名称和语言。可以以后再补全。", descriptionEn: "Organization name and language." },
+    { href: "/owner/settings", label: "机构设置", labelEn: "Settings", icon: "⚙", description: "机构资料、报告规则，以及个人登录迎宾动效。", descriptionEn: "Organization, report rules, and personal weather welcome." },
     { href: "/owner/account", label: "账号管理", labelEn: "Account", icon: "☺", description: "查看自己的登录账号并修改自己的密码。不能修改老师或家长的密码。", descriptionEn: "View this login and change only your own password." },
   ],
   teacher: [
@@ -57,6 +57,7 @@ const navigationCopy: Record<WorkspaceArea, Array<NavItem & { labelEn: string; d
     { href: "/teacher/homework", label: "作业批改", labelEn: "Homework", icon: "☑", description: "查看家长提交，批改、退回或标记完成。", descriptionEn: "Review submissions, grade, return, or mark complete." },
     { href: "/teacher/exams", label: "考试成绩", labelEn: "Exams", icon: "▤", description: "录入班级考试成绩与总结，发布给家长。", descriptionEn: "Enter class exam scores and publish to parents." },
     { href: "/teacher/reports", label: "教学报告", labelEn: "Reports", icon: "✳", description: "编辑 AI 草稿，确认后再发布给家长。", descriptionEn: "Edit the draft, then confirm it before parents can see it." },
+    { href: "/teacher/settings", label: "设置", labelEn: "Settings", icon: "⚙", description: "课表入口、记录偏好与登录迎宾动效。", descriptionEn: "Schedule defaults, note prefs, and weather welcome." },
     { href: "/teacher/account", label: "账号管理", labelEn: "Account", icon: "☺", description: "查看自己的登录账号并修改自己的密码。", descriptionEn: "View this login and change only your own password." },
   ],
   parent: [
@@ -68,6 +69,7 @@ const navigationCopy: Record<WorkspaceArea, Array<NavItem & { labelEn: string; d
     { href: "/parent/exams", label: "成绩", labelEn: "Scores", icon: "★", description: "已发布的考试成绩与老师总结。", descriptionEn: "Published exam scores." },
     { href: "/parent/attendance", label: "出勤记录", labelEn: "Attendance", icon: "✓", description: "已绑定孩子的出勤。", descriptionEn: "Attendance for linked children." },
     { href: "/parent/reports", label: "教学报告", labelEn: "Reports", icon: "✳", description: "教师确认并发布的报告。", descriptionEn: "Published teacher reports." },
+    { href: "/parent/settings", label: "设置", labelEn: "Settings", icon: "⚙", description: "列表偏好、小星默认模式与登录迎宾动效。", descriptionEn: "List prefs, Xiaoxing default, and weather welcome." },
     { href: "/parent/account", label: "账号管理", labelEn: "Account", icon: "♡", description: "登录账号、密码与已绑定孩子。", descriptionEn: "Login, password, and linked children." },
   ],
 };

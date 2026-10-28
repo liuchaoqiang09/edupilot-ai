@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ParentChildFilter } from "@/components/parent-child-filter";
+import { ParentTimeOrder, parseTimeOrder } from "@/components/parent-time-order";
 import { requireRole } from "@/lib/auth";
 import { formatClock, formatDateLabel, formatDateTime, shanghaiDateKey } from "@/lib/datetime";
 import {
@@ -14,12 +15,13 @@ import { prisma } from "@/lib/prisma";
 export default async function ParentHomeworkPage({
   searchParams,
 }: {
-  searchParams: Promise<{ student?: string }>;
+  searchParams: Promise<{ student?: string; order?: string }>;
 }) {
   const user = await requireRole("PARENT", "parent");
   const params = await searchParams;
   const children = await linkedParentChildren(user.organizationId, user.id);
   const studentId = pickLinkedChildId(children, params.student);
+  const order = parseTimeOrder(params.order);
   const studentIds = studentId ? [studentId] : children.map((child) => child.id);
   const rows = studentIds.length === 0 ? [] : await prisma.lessonStudent.findMany({
     where: {
@@ -47,7 +49,7 @@ export default async function ParentHomeworkPage({
         },
       },
     },
-    orderBy: { lessonSession: { startAt: "desc" } },
+    orderBy: { lessonSession: { startAt: order } },
     take: 40,
   });
 
@@ -77,7 +79,20 @@ export default async function ParentHomeworkPage({
     <section>
       <h1 className="text-[28px] font-semibold tracking-tight">作业</h1>
       <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">教师保存作业要求后会出现在这里。点「查看详情」可看全文、提交文字/照片/附件，并查看批改结果。报告里的作业建议仍只在报告发布后显示。</p>
-      <ParentChildFilter basePath="/parent/homework" childrenList={children} selectedId={studentId} />
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <ParentChildFilter
+          basePath="/parent/homework"
+          childrenList={children}
+          selectedId={studentId}
+          extraParams={order === "asc" ? { order: "asc" } : {}}
+          className="flex flex-wrap items-center gap-2"
+        />
+        <ParentTimeOrder
+          basePath="/parent/homework"
+          order={order}
+          extraParams={studentId ? { student: studentId } : {}}
+        />
+      </div>
       <div className="mt-6 space-y-3">
         {homework.length === 0 ? (
           <p className="rounded-2xl border border-[var(--line)] bg-white px-4 py-12 text-center text-sm text-[var(--muted)]">还没有已保存的作业。</p>

@@ -1,5 +1,5 @@
 import { OwnerBilling, type BillingStudent } from "@/components/owner-billing";
-import { Pager, pageOf } from "@/components/pager";
+import { Pager, billingPageSize, pageOf } from "@/components/pager";
 import { renewalOutcomeLabel } from "@/lib/renewal-follow-up";
 import type { DirectoryStudent } from "@/components/student-combobox";
 import { billingSortFields, billingUsageLabel, compareBillingRows, compareBillingUrgency, compareCourseMates, matchesBillingFilter, matchesBillingQuery, needsBillingFollowUp, type BillingQuickFilter } from "@/lib/billing-list";
@@ -327,7 +327,7 @@ export default async function OwnerBillingPage({
   const focusKey = params.focus?.trim() ?? "";
   const focused = focusKey ? pinned.find((row) => row.rowKey === focusKey) : null;
   const ordered = focused ? [focused, ...pinned.filter((row) => row.rowKey !== focusKey)] : pinned;
-  const window = pageOf(params.page, ordered.length);
+  const window = pageOf(params.page, ordered.length, billingPageSize);
   const exportQuery = new URLSearchParams();
   if (query) exportQuery.set("q", query);
   if (statusFilter) exportQuery.set("status", statusFilter);
@@ -359,7 +359,7 @@ export default async function OwnerBillingPage({
       renewalHref={renewalHref}
       pinRenewals={pinRenewals}
       focusKey={focusKey}
-      students={ordered.slice(window.start, window.start + 20)}
+      students={ordered.slice(window.start, window.start + window.size)}
       directory={directory}
       prefill={params.enroll === "1" && params.studentId && params.courseId ? { studentId: params.studentId, courseId: params.courseId, lessonStudentId: params.lessonStudentId ?? "" } : null}
       openFormKey={params.form === "enroll" ? params.open ?? "1" : ""}
@@ -368,7 +368,7 @@ export default async function OwnerBillingPage({
       openStudentId={params.form === "enroll" ? params.who ?? "" : ""}
     />
     <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
-      <Pager page={window.page} pages={window.pages} href={pageHref} />
+      <Pager page={window.page} pages={window.pages} href={pageHref} size={billingPageSize} />
     </div>
     </>
   );

@@ -1,13 +1,6 @@
-import { readFile } from "fs/promises";
-import { join } from "path";
 import { getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-
-const extensions = new Map([
-  ["image/jpeg", "jpg"],
-  ["image/png", "png"],
-  ["image/webp", "webp"],
-]);
+import { readReportPhotoBytes, reportPhotoExt } from "@/lib/report-photos";
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
@@ -31,11 +24,10 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     ? await prisma.parentStudentLink.findFirst({ where: { organizationId: user.organizationId, parentUserId: user.id, studentId: photo.report.studentId }, select: { id: true } })
     : null;
   if (!teaches && !owns && !parent) return new Response(null, { status: 403 });
-  const ext = extensions.get(photo.contentType);
-  if (!ext) return new Response(null, { status: 404 });
+  if (!reportPhotoExt(photo.contentType)) return new Response(null, { status: 404 });
   try {
-    const bytes = await readFile(join(process.cwd(), "uploads", "report-photos", `${photo.id}.${ext}`));
-    return new Response(bytes, { headers: { "content-type": photo.contentType, "cache-control": "private, max-age=3600" } });
+    const bytes = await readReportPhotoBytes(photo.id, photo.contentType, user.organizationId);
+    return new Response(new Uint8Array(bytes), { headers: { "content-type": photo.contentType, "cache-control": "private, max-age=3600" } });
   } catch {
     return new Response(null, { status: 404 });
   }

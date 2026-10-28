@@ -499,7 +499,16 @@ export function OwnerBilling({
           <p className="px-5 py-12 text-center text-sm leading-7 text-[var(--muted)]">{emptyBillingCopy(statusFilter, query, t)}</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[860px] border-collapse text-left text-xs">
+            <table className="w-full min-w-[860px] table-fixed border-collapse text-left text-xs">
+              <colgroup>
+                <col className="w-[18%]" />
+                <col className="w-[16%]" />
+                <col className="w-[10%]" />
+                <col className="w-[12%]" />
+                <col className="w-[16%]" />
+                <col className="w-[8%]" />
+                <col className="w-[20%]" />
+              </colgroup>
               <thead className="bg-[#fafbf9] text-[10px] tracking-wide text-[#84918e]">
                 <tr>
                   <SortHeader label={t("学员", "Student")} field="name" sortBy={sortBy} order={order} pathname="/owner/billing" query={query} extra={statusFilter ? { status: statusFilter } : undefined} />

@@ -5,11 +5,13 @@ export function ParentChildFilter({
   childrenList,
   selectedId,
   extraParams = {},
+  className = "mt-4 flex flex-wrap items-center gap-2",
 }: {
   basePath: string;
   childrenList: { id: string; name: string; status: string }[];
   selectedId: string;
   extraParams?: Record<string, string>;
+  className?: string;
 }) {
   if (childrenList.length <= 1) return null;
 
@@ -22,7 +24,7 @@ export function ParentChildFilter({
   }
 
   return (
-    <div className="mt-4 flex flex-wrap items-center gap-2">
+    <div className={className}>
       <span className="text-[11px] font-bold text-[var(--muted)]">孩子</span>
       <Link
         href={href("")}

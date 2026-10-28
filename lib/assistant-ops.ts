@@ -1584,7 +1584,7 @@ async function executeReschedule(actor: Actor, args: Record<string, string | num
 async function teacherMakeup(actor: Actor, sourceId: string, targetLessonId: string) {
   const source = await prisma.lessonStudent.findFirst({
     where: { id: sourceId, organizationId: actor.organizationId, attendanceStatus: "LEAVE", lessonSession: { teacherId: actor.teacherId ?? "__none__" } },
-    select: { id: true, studentId: true, student: { select: { name: true, status: true } }, lessonSession: { select: { id: true, courseId: true, startAt: true, status: true } } },
+    select: { id: true, studentId: true, seat: true, student: { select: { name: true, status: true } }, lessonSession: { select: { id: true, courseId: true, startAt: true, status: true } } },
   });
   if (!source || source.lessonSession.status === "CANCELLED" || source.student.status !== "ACTIVE") return { ok: false, message: "只能给自己课次上的请假记录安排补课。" };
   const already = await prisma.lessonStudent.findFirst({ where: { organizationId: actor.organizationId, makeupSourceId: source.id }, select: { id: true } });
@@ -1606,6 +1606,7 @@ async function teacherMakeup(actor: Actor, sourceId: string, targetLessonId: str
         studentId: source.studentId,
         studentName: source.student.name,
         sourceId: source.id,
+        sourceSeat: source.seat,
         lastAction: "安排补课",
       });
       await writeAudit(tx, { organizationId: actor.organizationId, actorId: actor.id, action: "MAKEUP_SCHEDULED", targetType: "LessonStudent", targetId: row.id, detail: `${actor.name}把${source.student.name}加入「${target.title ?? "课次"}」补课` });

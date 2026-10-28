@@ -85,3 +85,15 @@ $env:ARCHIVE_CONFIRM='yes'; npm.cmd run lessons:archive
 ## 周视图范围
 
 「排课 / 课表」的周视图默认是本周，每次只向数据库查询这一周。往前最多两周；更早的课次用「查看历史课表」。往后翻周不限，用来看已经排好的学期。
+
+## 生产部署要点
+
+1. `NODE_ENV=production`，`SEED_ENABLED=false`，配置强随机 `AUTH_SECRET` 与真实 `DATABASE_URL`。
+2. 部署前执行 `npx prisma migrate deploy`。探活：`GET /api/health`（检查应用、数据库、`uploads` 可写）。
+3. **持久化本地目录**（相对应用工作目录）。容器或无状态主机必须挂载卷，否则作业附件、课堂照片与课次归档会在重建后丢失：
+   - `uploads/homework-assets/`（按机构分子目录）
+   - `uploads/report-photos/`（按机构分子目录；旧扁平文件仍可读）
+   - `backups/`（课次归档脚本输出）
+4. 需要 AI 报告或小星助教时配置 `AI_API_KEY`、`AI_BASE_URL`、`AI_MODEL`。未配置时教学记录仍可保存，生成与助教会明确失败。
+5. `/api/ai/*` 有进程内按用户限流；多实例请在网关再加一层限流。服务端失败会打一行 JSON 日志（`ops-log`），勿把密钥打进日志。
+6. 多实例部署时，上传目录须共享存储；当前未接对象存储。

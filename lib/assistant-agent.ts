@@ -13,13 +13,33 @@ import { prisma } from "@/lib/prisma";
 import { publishReportByTeacher } from "@/lib/report-flow";
 import { reportStatusLabel } from "@/lib/report-labels";
 import { executeOperation, executeTools, lookupTools, operationWrites, previewOperation, routeExecute, runOperationRead } from "@/lib/assistant-ops";
+import {
+  executeParentWrite,
+  landForParentUtterance,
+  parentToolsFor,
+  previewParentWrite,
+  resolveParentPlace,
+  runParentTool,
+  type ParentActor,
+} from "@/lib/assistant-parent";
 import { landForUtterance, locateWork, openExactTool, queueIntent, resolveExactPlace, screenIntent, screenStudentsTool } from "@/lib/assistant-places";
+import {
+  askModeBlockedMessage,
+  helpIntent,
+  modeContractPrompt,
+  parseAssistantMode,
+  type AssistantMode,
+  isAskBlockedTool,
+} from "@/lib/assistant-mode";
+export { helpIntent };
 import { assertAssistantMayExecute, assistantForbiddenMessage } from "@/lib/assistant-policy";
 
 export const assistantTimeoutMessage = "小星助教思考超时，请稍后再试";
+export { parseAssistantMode };
+export type { AssistantMode };
 
 const skillPath = join(process.cwd(), ".cursor/skills/xiaoxing-assistant/SKILL.md");
-const skillFallback = "你是机构里的教务长。用户要找一类人就调用 screen_students，要办理就先查编号再调用 execute_，只想打开功能才调用 open_exact。不要说系统没有筛选，不要编造编号，不要编造金额或统计数字，不要删除数据。问收入、赚了多少、本月收款时必须调用 get_revenue_summary。";
+const skillFallback = "你是机构里的教务长。问答模式只查与打开；工作模式先查编号再 execute_。三禁：删除、财务写、账号写。不要编造编号和金额。";
 
 function assistantSkill() {
   try {
@@ -31,7 +51,22 @@ function assistantSkill() {
   }
 }
 
-const writeTools = new Set(["adjust_student_hours", "adjust_hours", "create_lesson", "schedule_single_lesson", "publish_report", ...operationWrites]);
+const parentWriteTools = new Set([
+  "execute_parent_leave",
+  "execute_cancel_parent_leave",
+  "execute_reply_report",
+  "execute_mark_notices_read",
+]);
+
+const writeTools = new Set([
+  "adjust_student_hours",
+  "adjust_hours",
+  "create_lesson",
+  "schedule_single_lesson",
+  "publish_report",
+  ...operationWrites,
+  ...parentWriteTools,
+]);
 
 function canonicalWrite(name: string) {
   if (name === "adjust_hours") return "adjust_student_hours";
@@ -39,7 +74,7 @@ function canonicalWrite(name: string) {
   return name;
 }
 
-type Area = "owner" | "teacher";
+type Area = "owner" | "teacher" | "parent";
 
 type Actor = {
   id: string;
@@ -48,6 +83,20 @@ type Actor = {
   area: Area;
   teacherId: string | null;
 };
+
+function asParent(actor: Actor): ParentActor {
+  return { id: actor.id, name: actor.name, organizationId: actor.organizationId, area: "parent", teacherId: null };
+}
+
+function asStaff(actor: Actor) {
+  return {
+    id: actor.id,
+    name: actor.name,
+    organizationId: actor.organizationId,
+    area: actor.area === "teacher" ? ("teacher" as const) : ("owner" as const),
+    teacherId: actor.teacherId,
+  };
+}
 
 type ConfirmPayload = {
   exp: number;
@@ -155,18 +204,53 @@ const mutationTools: OpenAI.Chat.ChatCompletionTool[] = [
   },
 ];
 
-function toolsFor(actor: Actor) {
-  const base = actor.area === "owner" ? [...readTools, overdueTool] : readTools;
-  return [screenStudentsTool(), openExactTool(actor.area), ...base, ...lookupTools(actor), ...executeTools(actor)];
+function toolsFor(actor: Actor, mode: AssistantMode) {
+  if (actor.area === "parent") return parentToolsFor(mode);
+  const staff = { ...actor, area: actor.area === "teacher" ? ("teacher" as const) : ("owner" as const) };
+  const base = staff.area === "owner" ? [...readTools, overdueTool] : readTools;
+  const readSide = [screenStudentsTool(), openExactTool(staff.area), ...base, ...lookupTools(staff)];
+  if (mode === "ask") return readSide;
+  return [...readSide, ...executeTools(staff)];
 }
 
-async function answerAndOpen(actor: Actor, text: string, content: string): Promise<AgentReply> {
+async function answerAndOpen(actor: Actor, text: string, content: string, mode: AssistantMode): Promise<AgentReply> {
   if (text.startsWith("系统已执行")) return { ok: true, type: "message", content };
-  const landed = await landForUtterance(actor, text);
+  if (actor.area === "parent") {
+    const home = "/parent";
+    const compact = text.replace(/\s+/g, "");
+    const wantsOpen = /^(打开|带我去|去看|我想看|查看|跳转)/.test(compact) || /打开|带我去/.test(compact);
+    const landed = await landForParentUtterance(asParent(actor), text);
+    if (mode === "ask" && !wantsOpen) {
+      if (!landed.href || landed.href === home || landed.href.startsWith(`${home}?`)) {
+        return { ok: true, type: "message", content };
+      }
+      return { ok: true, type: "navigate", content, navigation: { href: landed.href } };
+    }
+    return { ok: true, type: "navigate", content, navigation: { href: landed.href } };
+  }
+  const staff = asStaff(actor);
+  const home = staff.area === "teacher" ? "/teacher" : "/owner";
+  const compact = text.replace(/\s+/g, "");
+  const wantsOpen = /^(打开|带我去|去看|我想看|查看|跳转)/.test(compact) || /打开|带我去|名单页|流水页/.test(compact);
+  // 问答模式默认只回话；除非用户明确要打开，或落地页不是工作台首页。
+  if (mode === "ask" && !wantsOpen) {
+    const landed = await landForUtterance(staff, text);
+    if (!landed.href || landed.href === home || landed.href.startsWith(`${home}?`)) {
+      return { ok: true, type: "message", content };
+    }
+    return { ok: true, type: "navigate", content, navigation: { href: landed.href } };
+  }
+  const landed = await landForUtterance(staff, text);
   return { ok: true, type: "navigate", content, navigation: { href: landed.href } };
 }
 
 function pageFor(area: Area, tool: string) {
+  if (area === "parent") {
+    if (tool.includes("report") || tool === "execute_reply_report") return "/parent/reports";
+    if (tool.includes("notice")) return "/parent/notices";
+    if (tool.includes("leave")) return "/parent/schedule";
+    return "/parent";
+  }
   const owner = area === "owner";
   if (["create_enrollment", "record_payment", "adjust_student_hours", "add_follow_up", "stop_enrollment"].includes(tool)) return owner ? "/owner/billing" : "/teacher";
   if (["create_lesson", "schedule_recurring_lessons", "change_lesson_time", "change_lesson_classroom", "change_lesson_teacher", "cancel_lesson", "make_up_lesson", "add_lesson_student"].includes(tool)) return owner ? "/owner/schedule" : "/teacher/schedule";
@@ -212,8 +296,13 @@ function refreshAssistant() {
   revalidatePath("/teacher/schedule");
   revalidatePath("/teacher/records");
   revalidatePath("/teacher/reports");
+  revalidatePath("/parent");
   revalidatePath("/parent/reports");
   revalidatePath("/parent/schedule");
+  revalidatePath("/parent/notices");
+  revalidatePath("/parent/homework");
+  revalidatePath("/parent/courses");
+  revalidatePath("/parent/attendance");
 }
 
 function secret() {
@@ -248,6 +337,10 @@ function readToken(token: string): ConfirmPayload | null {
 export async function actorFor(user: CurrentUser, area: Area): Promise<Actor | null> {
   if (area === "owner") {
     if (!user.roles.includes("OWNER")) return null;
+    return { id: user.id, name: user.name, organizationId: user.organizationId, area, teacherId: null };
+  }
+  if (area === "parent") {
+    if (!user.roles.includes("PARENT")) return null;
     return { id: user.id, name: user.name, organizationId: user.organizationId, area, teacherId: null };
   }
   if (!user.roles.includes("TEACHER")) return null;
@@ -641,36 +734,86 @@ function history(input: unknown): OpenAI.Chat.ChatCompletionMessageParam[] {
   }).slice(-12);
 }
 
-export async function runAssistant(actor: Actor, messages: unknown): Promise<AgentReply> {
+export async function runAssistant(actor: Actor, messages: unknown, modeInput: unknown = "agent"): Promise<AgentReply> {
+  const mode = parseAssistantMode(modeInput);
   const ai = modelClient();
   if (!ai) return { ok: false, message: "小星助教还没有配置完成，请稍后再试。" };
   const conversation: OpenAI.Chat.ChatCompletionMessageParam[] = [
     {
       role: "system",
-      content: `${assistantSkill()}\n\n${actor.area === "teacher" ? "你现在服务的是教师。不能办理报名、收款、退费、欠费、统计、操作记录、其他教师、课程教室和机构设置。只能办理自己的课次、考勤、报告和自己学生的课时。" : "你现在服务的是机构负责人，可以办理本机构除删除以外的全部教务写操作。金额、收入、课次数量和学生人数必须来自工具返回值，禁止自行估算或编造。"}`,
+      content: `${assistantSkill()}\n\n${modeContractPrompt(mode, actor.area)}`,
     },
     ...history(messages),
   ];
   if (conversation.length === 1) return { ok: false, message: "请先告诉我你想查询或办理什么。" };
   const latestUser = [...conversation].reverse().find((item) => item.role === "user");
   const latestText = latestUser && typeof latestUser.content === "string" ? latestUser.content : "";
-  const screened = screenIntent(latestText) ?? queueIntent(latestText);
-  if (screened) {
-    const located = await locateWork(actor, screened);
-    if (!located.ok) return { ok: true, type: "message", content: located.message };
-    return { ok: true, type: "navigate", content: located.reply, navigation: { href: located.href } };
+  // 家长端不做全机构名单/经营筛查，避免误开负责人页。
+  if (actor.area !== "parent") {
+    const screened = screenIntent(latestText) ?? queueIntent(latestText);
+    if (screened) {
+      const located = await locateWork(asStaff(actor), screened);
+      if (!located.ok) return { ok: true, type: "message", content: located.message };
+      return { ok: true, type: "navigate", content: located.reply, navigation: { href: located.href } };
+    }
   }
   const lookOnly = /^(打开|带我去|去看|我想看|查看|跳转)/.test(latestText.replace(/\s+/g, "")) && !/交\s*\d+|\d+\s*(元|节)|现金|微信|支付宝/.test(latestText);
-  const workOrder = !latestText.startsWith("系统已执行") && !lookOnly && /交\s*\d+|\d+\s*(元|节)|现金|微信|支付宝|银行卡|报名|排课|点名|考勤|调课时|加课|收款|退费|跟进/.test(latestText);
+  const staffWork = /交\s*\d+|\d+\s*(元|节)|现金|微信|支付宝|银行卡|报名|排课|点名|考勤|调课时|加课|收款|退费|跟进|停用|取消课|补课/;
+  const parentWork = /请假|消假|取消请假|回复报告|回报告|标已读|全部已读|标成已读/;
+  // 用法 FAQ 不强制办理；有明确写入槽的 helpIntent 会返回 false，仍走 workOrder。
+  const usageHelp = helpIntent(latestText);
+  const workOrder =
+    !latestText.startsWith("系统已执行") &&
+    !lookOnly &&
+    !usageHelp &&
+    (actor.area === "parent" ? parentWork.test(latestText) : staffWork.test(latestText));
+  if (mode === "ask" && workOrder) {
+    return {
+      ok: true,
+      type: "message",
+      content:
+        actor.area === "parent"
+          ? "这件事需要写入系统。请把顶部切换到「工作模式」，再说一次，我会查齐信息并弹出确认卡让你核对后再执行。"
+          : "这件事需要写入系统。请把顶部切换到「工作模式」，再说一次，我会查齐信息并弹出确认卡让你核对后再执行。",
+    };
+  }
+  // 财务三禁：不进模型乱跳，直接打开收款入口并说明须人在页面操作（对齐 Cursor 对敏感写的硬拦截）。
+  const financeAsk = !latestText.startsWith("系统已执行") && /收款|退费|作废流水|调课时|交\s*\d+|收\s*\d+\s*元|帮.+收/.test(latestText.replace(/\s+/g, ""));
+  if (financeAsk) {
+    if (actor.area === "parent") {
+      return {
+        ok: true,
+        type: "navigate",
+        content: "家长端可以查看孩子的课时与费用概况，但不能代交费或改账。已打开「课时与费用」页；交费请联系机构在线下或财务页处理。",
+        navigation: { href: "/parent/courses" },
+      };
+    }
+    const landed = await landForUtterance(asStaff(actor), latestText);
+    const href = landed.href.includes("/billing") ? landed.href : actor.area === "owner" ? "/owner/billing?form=pay" : "/teacher";
+    if (mode === "ask") {
+      return {
+        ok: true,
+        type: "navigate",
+        content: "收款、退费、作废和调课时属于财务操作，问答模式也不能代写。已打开「报名与课时」入口，请切换到工作台页面由人操作；若只要查欠费/收入，可以直接问「谁欠费」或「本月收了多少」。",
+        navigation: { href },
+      };
+    }
+    return {
+      ok: true,
+      type: "navigate",
+      content: "收款、退费、作废和调课时是财务三禁，我不能代为写入。已打开对应页面，请你在页面完成这笔操作；我可以继续帮你查欠费、收入或打开某位学生的报名卡片。",
+      navigation: { href },
+    };
+  }
 
   try {
-    let toolChoice: OpenAI.Chat.ChatCompletionToolChoiceOption = "auto";
+    let toolChoice: OpenAI.Chat.ChatCompletionToolChoiceOption = mode === "agent" && workOrder ? "required" : "auto";
     for (let step = 0; step < 8; step += 1) {
       const completion = await ai.client.chat.completions.create({
         model: ai.model,
         temperature: 0.2,
         messages: conversation,
-        tools: toolsFor(actor),
+        tools: toolsFor(actor, mode),
         tool_choice: toolChoice,
       });
       toolChoice = "auto";
@@ -679,7 +822,16 @@ export async function runAssistant(actor: Actor, messages: unknown): Promise<Age
       const calls = message.tool_calls ?? [];
       if (calls.length === 0) {
         const content = message.content?.trim() || "我没有查到可以回答的内容。";
-        return answerAndOpen(actor, latestText, content);
+        if (mode === "agent" && workOrder && step < 2) {
+          conversation.push({ role: "assistant", content: content });
+          conversation.push({
+            role: "user",
+            content: "（系统）上一轮没有调用工具。这是办理任务：请先用查询工具拿到编号，再调用对应的 execute_ 工具。不要只文字说明。",
+          });
+          toolChoice = "required";
+          continue;
+        }
+        return answerAndOpen(actor, latestText, content, mode);
       }
       conversation.push(message);
       for (const call of calls) {
@@ -693,9 +845,82 @@ export async function runAssistant(actor: Actor, messages: unknown): Promise<Age
         } catch {
           return { ok: false, message: assistantTimeoutMessage };
         }
+        if (mode === "ask" && isAskBlockedTool(call.function.name)) {
+          conversation.push({ role: "tool", tool_call_id: call.id, content: askModeBlockedMessage(actor.area) });
+          continue;
+        }
+        if (actor.area === "parent") {
+          if (call.function.name === "screen_students") {
+            conversation.push({ role: "tool", tool_call_id: call.id, content: "家长端不能查看全机构名单，只能查已绑定的孩子。" });
+            continue;
+          }
+          if (call.function.name === "open_exact") {
+            if (workOrder) {
+              conversation.push({
+                role: "tool",
+                tool_call_id: call.id,
+                content: "这是要办理的业务，不能只打开页面。请先用查询工具拿到编号，再调用对应的 execute_ 工具。",
+              });
+              continue;
+            }
+            const place = typeof args.place === "string" ? args.place : "";
+            const target = typeof args.target === "string" ? args.target : "";
+            const located = await resolveParentPlace(asParent(actor), place, target);
+            if (!located.ok) {
+              conversation.push({ role: "tool", tool_call_id: call.id, content: located.message });
+              continue;
+            }
+            return { ok: true, type: "navigate", content: located.reply, navigation: { href: located.href } };
+          }
+          if (parentWriteTools.has(call.function.name)) {
+            if (mode === "ask") {
+              conversation.push({ role: "tool", tool_call_id: call.id, content: askModeBlockedMessage("parent") });
+              continue;
+            }
+            const preview = await previewParentWrite(asParent(actor), call.function.name, args);
+            if (!preview.ok) {
+              conversation.push({
+                role: "tool",
+                tool_call_id: call.id,
+                content: `${preview.message} 缺什么就只补问那一项；能查到的编号请先用查询工具拿到再调用。`,
+              });
+              continue;
+            }
+            let token = "";
+            try {
+              token = sign({
+                exp: Date.now() + 10 * 60 * 1000,
+                userId: actor.id,
+                organizationId: actor.organizationId,
+                area: actor.area,
+                teacherId: actor.teacherId,
+                tool: call.function.name,
+                args: preview.args,
+              });
+            } catch {
+              return { ok: false, message: "小星助教暂时不能发起修改，请稍后再试。" };
+            }
+            return {
+              ok: true,
+              type: "confirm",
+              content: "好的，准备为您执行这项操作。请核对下面的参数，确认后才会写入。",
+              confirmation: {
+                token,
+                summary: preview.summary.replace(/，?是否确认[执行？]*？/g, "").replace(/，?是否确认？/g, ""),
+                detail: preview.detail,
+                href: preview.href || pageFor(actor.area, call.function.name),
+                fields: confirmFields(preview.summary, preview.detail),
+              },
+            };
+          }
+          const content = await runParentTool(asParent(actor), call.function.name, args);
+          conversation.push({ role: "tool", tool_call_id: call.id, content });
+          continue;
+        }
+        const staff = asStaff(actor);
         if (call.function.name === "screen_students") {
           const situation = typeof args.situation === "string" ? args.situation : "";
-          const located = await locateWork(actor, situation);
+          const located = await locateWork(staff, situation);
           if (!located.ok) {
             conversation.push({ role: "tool", tool_call_id: call.id, content: located.message });
             continue;
@@ -709,7 +934,7 @@ export async function runAssistant(actor: Actor, messages: unknown): Promise<Age
           }
           const place = typeof args.place === "string" ? args.place : "";
           const target = typeof args.target === "string" ? args.target : "";
-          const located = await resolveExactPlace(actor, place, target);
+          const located = await resolveExactPlace(staff, place, target);
           if (!located.ok) {
             conversation.push({ role: "tool", tool_call_id: call.id, content: located.message });
             continue;
@@ -722,10 +947,14 @@ export async function runAssistant(actor: Actor, messages: unknown): Promise<Age
           continue;
         }
         if (routed && "tool" in routed) {
+          if (mode === "ask") {
+            conversation.push({ role: "tool", tool_call_id: call.id, content: askModeBlockedMessage(actor.area) });
+            continue;
+          }
           const toolName = routed.tool;
           const preview = toolName === "adjust_student_hours" || toolName === "create_lesson" || toolName === "publish_report"
-            ? await previewWrite(actor, toolName, routed.args)
-            : await previewOperation(actor, toolName, routed.args);
+            ? await previewWrite(staff, toolName, routed.args)
+            : await previewOperation(staff, toolName, routed.args);
           if (!preview.ok) {
             conversation.push({ role: "tool", tool_call_id: call.id, content: `${preview.message} 缺什么就只向用户补问那一项。能查到的编号请先用查询工具拿到，再重新调用这个执行工具。不要让用户自己去页面填表。` });
             if (preview.message.includes("学生")) toolChoice = { type: "function", function: { name: "search_student" } };
@@ -745,7 +974,7 @@ export async function runAssistant(actor: Actor, messages: unknown): Promise<Age
           } catch {
             return { ok: false, message: "小星助教暂时不能发起修改，请稍后再试。" };
           }
-          const landed = await landForUtterance(actor, latestText);
+          const landed = await landForUtterance(staff, latestText);
           return {
             ok: true,
             type: "confirm",
@@ -757,12 +986,12 @@ export async function runAssistant(actor: Actor, messages: unknown): Promise<Age
           conversation.push({ role: "tool", tool_call_id: call.id, content: "请改用 execute_ 开头的执行工具。" });
           continue;
         }
-        const operated = await runOperationRead(actor, call.function.name, args);
-        const content = operated ?? await runTool(actor, call.function.name, args);
+        const operated = await runOperationRead(staff, call.function.name, args);
+        const content = operated ?? await runTool(staff, call.function.name, args);
         conversation.push({ role: "tool", tool_call_id: call.id, content });
       }
     }
-    return answerAndOpen(actor, latestText, "这次需要的步骤太多，请把想办的事再说得具体一些。");
+    return answerAndOpen(actor, latestText, "这次需要的步骤太多，请把想办的事再说得具体一些。", mode);
   } catch (error) {
     if (error instanceof OpenAI.APIConnectionTimeoutError || (error instanceof Error && /timeout|timed out/i.test(error.message))) {
       return { ok: false, message: assistantTimeoutMessage };
@@ -783,10 +1012,21 @@ export async function executeAssistant(actor: Actor, token: string) {
   }
   const gate = assertAssistantMayExecute(payload.tool, payload.args);
   if (!gate.ok) return { ok: false as const, message: gate.message };
-  if (operationWrites.has(payload.tool)) {
-    const again = await previewOperation(actor, payload.tool, payload.args);
+  if (actor.area === "parent") {
+    if (!parentWriteTools.has(payload.tool)) {
+      return { ok: false as const, message: "家长端小星不能执行这个操作。" };
+    }
+    const again = await previewParentWrite(asParent(actor), payload.tool, payload.args);
     if (!again.ok) return { ok: false as const, message: again.message };
-    return executeOperation(actor, payload.tool, again.args);
+    const result = await executeParentWrite(asParent(actor), payload.tool, again.args);
+    if (result.ok) refreshAssistant();
+    return result;
+  }
+  const staff = asStaff(actor);
+  if (operationWrites.has(payload.tool)) {
+    const again = await previewOperation(staff, payload.tool, payload.args);
+    if (!again.ok) return { ok: false as const, message: again.message };
+    return executeOperation(staff, payload.tool, again.args);
   }
   if (payload.tool === "adjust_student_hours") {
     return { ok: false as const, message: assistantForbiddenMessage("finance") };

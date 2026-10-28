@@ -1,16 +1,25 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { BrandLockup } from "@/components/brand-mark";
+import { markWeatherIntroPending } from "@/lib/weather-condition";
+
+function goAfterLogin(redirect: string) {
+  markWeatherIntroPending();
+  window.location.assign(redirect);
+}
+
+const DEMO_PASSWORD = "edupilot2026";
 
 const accounts = [
-  { email: "demo_owner@edupilot.test", title: "机构负责人", detail: "经营概览 · 教务管理 · 教学报告", icon: "⌂" },
-  { email: "demo_teacher@edupilot.test", title: "教师", detail: "我的课表 · 课堂记录 · 教学报告", icon: "✎" },
-  { email: "demo_parent@edupilot.test", title: "家长", detail: "孩子课表 · 出勤 · 已发布学习报告", icon: "♡" },
+  { email: "demo_owner@edupilot.test", title: "负责人端", detail: "经营概览 · 教务管理 · 教学报告", icon: "⌂", home: "/owner" },
+  { email: "demo_teacher@edupilot.test", title: "教师端", detail: "我的课表 · 课堂记录 · 教学报告", icon: "✎", home: "/teacher" },
+  { email: "demo_parent@edupilot.test", title: "家长端", detail: "孩子课表 · 出勤 · 已发布学习报告", icon: "♡", home: "/parent" },
 ];
 
 const fieldClass = "w-full rounded-[10px] border border-[var(--line)] bg-white px-3 py-3 text-base font-medium outline-none focus:border-[var(--teal)]";
 
-export function LoginScreen() {
+export function LoginScreen({ showDemoAccounts = false }: { showDemoAccounts?: boolean }) {
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
@@ -98,7 +107,7 @@ export function LoginScreen() {
         return;
       }
       if (data?.redirect) {
-        window.location.assign(data.redirect);
+        goAfterLogin(data.redirect);
         return;
       }
       if (data?.ticket && (data.status === "register" || data.status === "pending")) {
@@ -162,7 +171,7 @@ export function LoginScreen() {
         setError(data?.message || "没有完成加入。");
         return;
       }
-      window.location.assign(data.redirect);
+      goAfterLogin(data.redirect);
     } catch {
       setError("网络异常，请稍后重试。");
     } finally {
@@ -230,11 +239,10 @@ export function LoginScreen() {
     }
   }
 
-  async function passwordLogin(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function loginWith(nextEmail: string, nextPassword: string) {
     setError("");
     setNotice("");
-    if (!email.trim() || !password) {
+    if (!nextEmail.trim() || !nextPassword) {
       setError("请输入账号和密码。");
       return;
     }
@@ -243,14 +251,14 @@ export function LoginScreen() {
       const response = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email, password, remember }),
+        body: JSON.stringify({ email: nextEmail, password: nextPassword, remember }),
       });
       const data = (await response.json().catch(() => null)) as { message?: string; redirect?: string } | null;
       if (!response.ok || !data?.redirect) {
         setError(data?.message || "账号或密码不正确。");
         return;
       }
-      window.location.assign(data.redirect);
+      goAfterLogin(data.redirect);
     } catch {
       setError("网络异常，请稍后重试。");
     } finally {
@@ -258,13 +266,25 @@ export function LoginScreen() {
     }
   }
 
+  async function passwordLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await loginWith(email, password);
+  }
+
+  async function enterDemo(account: (typeof accounts)[number]) {
+    setEmail(account.email);
+    setPassword(DEMO_PASSWORD);
+    setError("");
+    setNotice(`已填入${account.title}演示账号，正在进入…`);
+    await loginWith(account.email, DEMO_PASSWORD);
+  }
+
   return (
     <div className="grid min-h-screen bg-[#f7f8f4] lg:grid-cols-[1.05fr_0.95fr]">
       <section className="relative hidden overflow-hidden bg-[var(--navy)] text-white lg:flex lg:flex-col lg:justify-between lg:px-[clamp(28px,6vw,90px)] lg:py-14">
         <div className="pointer-events-none absolute -bottom-32 -right-32 h-[430px] w-[430px] rounded-full border border-[#54736e] shadow-[0_0_0_48px_#24484a,0_0_0_96px_#1d3e42]" />
-        <div className="relative z-10 flex items-center gap-3 text-[19px] font-extrabold tracking-tight">
-          <span className="grid h-9 w-9 place-items-center rounded-xl bg-[var(--lime)] font-black text-[var(--navy)]">E</span>
-          EduPilot AI
+        <div className="relative z-10">
+          <BrandLockup size={38} tone="light" />
         </div>
         <div className="relative z-10 max-w-[530px] py-16">
           <div className="text-[11px] font-extrabold tracking-[2px] text-[#a8cbc0]">TEACHING · INSIGHT · GROWTH</div>
@@ -286,9 +306,8 @@ export function LoginScreen() {
 
       <section className="flex items-center justify-center px-4 py-10 sm:px-6 lg:px-8">
         <div className="w-full max-w-[470px]">
-          <div className="mb-6 flex items-center gap-3 lg:hidden">
-            <span className="grid h-9 w-9 place-items-center rounded-xl bg-[var(--lime)] font-black text-[var(--navy)]">E</span>
-            <span className="text-lg font-extrabold text-[var(--navy)]">EduPilot AI</span>
+          <div className="mb-6 lg:hidden">
+            <BrandLockup size={36} tone="dark" />
           </div>
           <div className="text-[11px] font-extrabold tracking-[2px] text-[var(--teal)]">EDUPILOT AI</div>
           <h2 className="mt-3 text-[29px] font-semibold tracking-tight">账号密码登录</h2>
@@ -386,7 +405,9 @@ export function LoginScreen() {
             </form>
           ) : (
             <form onSubmit={passwordLogin} className="mt-6 grid gap-3.5">
-              <p className="rounded-[10px] bg-[var(--lime)] px-3 py-2.5 text-xs font-bold leading-5 text-[var(--navy)]">短信登录即将上线。内测请使用下方账号密码登录。</p>
+              <p className="rounded-[10px] bg-[var(--lime)] px-3 py-2.5 text-xs font-bold leading-5 text-[var(--navy)]">
+                短信登录即将上线。内测可手动输入，或点下方入口一键进入对应端。统一密码 {DEMO_PASSWORD}。
+              </p>
               <label className="grid gap-1.5 text-xs font-bold">
                 账号 <span className="font-medium text-[#9a6729]">必填</span>
                 <input value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="username" placeholder="请输入账号" className={fieldClass} />
@@ -412,18 +433,33 @@ export function LoginScreen() {
               <button type="submit" disabled={pending} className="rounded-[10px] bg-[var(--navy)] px-4 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60">
                 {pending ? "正在登录…" : "登录工作台　→"}
               </button>
-              <div className="mt-2 grid gap-3">
-                {accounts.map((account) => (
-                  <button key={account.email} type="button" onClick={() => { setEmail(account.email); setError(""); document.getElementById("password")?.focus(); }} className="flex w-full items-center gap-3.5 rounded-2xl border border-[var(--line)] bg-white px-4 py-4 text-left transition hover:-translate-y-px hover:border-[var(--teal)] hover:shadow-[0_14px_36px_rgba(24,42,53,.07)]">
-                    <span className="grid h-11 w-11 place-items-center rounded-[13px] bg-[var(--teal-2)] text-xl">{account.icon}</span>
-                    <span>
-                      <strong className="block">{account.title}</strong>
-                      <small className="text-[var(--muted)]">{account.detail}</small>
-                    </span>
-                    <span className="ml-auto text-xl text-[var(--teal)]">→</span>
-                  </button>
-                ))}
-              </div>
+              {showDemoAccounts ? (
+                <>
+                  <div className="relative my-1 flex items-center gap-3 text-[10px] font-bold tracking-wide text-[var(--muted)]">
+                    <span className="h-px flex-1 bg-[var(--line)]" />
+                    或一键进入内测端
+                    <span className="h-px flex-1 bg-[var(--line)]" />
+                  </div>
+                  <div className="grid gap-2.5">
+                    {accounts.map((account) => (
+                      <button
+                        key={account.email}
+                        type="button"
+                        disabled={pending}
+                        onClick={() => void enterDemo(account)}
+                        className="flex w-full items-center gap-3.5 rounded-2xl border border-[var(--line)] bg-white px-4 py-3.5 text-left transition hover:-translate-y-px hover:border-[var(--teal)] hover:shadow-[0_14px_36px_rgba(24,42,53,.07)] disabled:opacity-60"
+                      >
+                        <span className="grid h-11 w-11 place-items-center rounded-[13px] bg-[var(--teal-2)] text-xl">{account.icon}</span>
+                        <span>
+                          <strong className="block text-sm">{account.title}</strong>
+                          <small className="block text-[11px] text-[var(--muted)]">{account.detail}</small>
+                        </span>
+                        <span className="ml-auto text-sm font-bold text-[var(--teal)]">进入 →</span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : null}
             </form>
           )}
         </div>

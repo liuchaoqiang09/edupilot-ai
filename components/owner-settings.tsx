@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useState, useTransition } from "react";
 import { saveOrganizationSettings } from "@/app/owner/settings/actions";
 import { usePick } from "@/components/locale-provider";
+import { WeatherIntroSettingsCard } from "@/components/workspace-settings";
 
 export type OrganizationSettings = {
   name: string;
@@ -125,6 +126,17 @@ export function OwnerSettingsForm({ settings }: { settings: OrganizationSettings
         <Principle title={t("家长数据范围", "Parent access")} detail={t("家长只能查看已验证绑定孩子的已发布内容。教师内部备注不会发给家长。", "A parent sees published content for linked children. Internal notes stay with the organization.")} always={t("强制启用", "Always on")} />
       </section>
     </form>
+  );
+}
+
+/** 机构设置页下方：个人界面偏好（不进机构保存接口） */
+export function OwnerPersonalSettings() {
+  const t = usePick();
+  return (
+    <div className="mt-4 max-w-xl">
+      <p className="mb-2 text-xs font-bold text-[var(--muted)]">{t("我的界面（个人）", "My display (personal)")}</p>
+      <WeatherIntroSettingsCard />
+    </div>
   );
 }
 

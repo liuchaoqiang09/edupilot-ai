@@ -30,12 +30,29 @@ export function RevenueTrend({ points }: { points: RevenuePoint[] }) {
               <text x={pad.left - 8} y={yAt(tick) + 4} textAnchor="end" fill="#74838b" fontSize="11">{axisMoney(tick)}</text>
             </g>
           ))}
-          <path d={area} fill="#146b62" opacity="0.12" />
-          <path d={line} fill="none" stroke="#146b62" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+          <defs>
+            <linearGradient id="owner-revenue-fill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#0f7a6c" stopOpacity="0.28" />
+              <stop offset="100%" stopColor="#0f7a6c" stopOpacity="0.02" />
+            </linearGradient>
+            <linearGradient id="owner-revenue-stroke" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor="#2a9d8a" />
+              <stop offset="100%" stopColor="#0f7a6c" />
+            </linearGradient>
+          </defs>
+          <path d={area} fill="url(#owner-revenue-fill)" className="owner-trend-area" />
+          <path d={line} fill="none" stroke="url(#owner-revenue-stroke)" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" className="owner-trend-line" />
           {points.map((point, index) => (
             <g key={point.label}>
-              <text x={xAt(index)} y={height - 8} textAnchor="middle" fill="#74838b" fontSize="11">{point.label}</text>
-              <circle cx={xAt(index)} cy={yAt(point.amount)} r="4" fill="#146b62" />
+              <text x={xAt(index)} y={height - 8} textAnchor="middle" fill="#6b7d84" fontSize="11">{point.label}</text>
+              <circle
+                cx={xAt(index)}
+                cy={yAt(point.amount)}
+                r={active === index ? 6 : 4}
+                fill={active === index ? "#2a9d8a" : "#0f7a6c"}
+                className="owner-trend-dot"
+                style={{ animationDelay: `${0.35 + index * 0.08}s` }}
+              />
               <circle
                 cx={xAt(index)}
                 cy={yAt(point.amount)}

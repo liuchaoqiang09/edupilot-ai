@@ -169,6 +169,9 @@ export async function publishReportByTeacher(
       },
     });
     if (published.count !== 1) return { ok: false as const, message: "发布没有完成，请刷新后再试。" };
+    await tx.reportRead.deleteMany({
+      where: { organizationId: actor.organizationId, reportId: report.id },
+    });
     await writeAudit(tx, {
       organizationId: actor.organizationId,
       actorId: actor.id,

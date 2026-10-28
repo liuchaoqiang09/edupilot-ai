@@ -1,4 +1,4 @@
-import { OwnerSettingsForm } from "@/components/owner-settings";
+import { OwnerPersonalSettings, OwnerSettingsForm } from "@/components/owner-settings";
 import { requireRole } from "@/lib/auth";
 import { pick } from "@/lib/locale";
 import { prisma } from "@/lib/prisma";
@@ -15,7 +15,7 @@ export default async function OwnerSettingsPage() {
   return (
     <section>
       <h1 className="text-[28px] font-semibold tracking-tight">{pick(user.locale, "机构设置", "Settings")}</h1>
-      <p className="mt-2 max-w-3xl leading-7 text-[var(--muted)]">{pick(user.locale, "配置机构业务和教学评价规则。业务可以自定义，底层权限与数据隔离不可关闭。", "Business details and report rules. Access rules stay on.")}</p>
+      <p className="mt-2 max-w-3xl leading-7 text-[var(--muted)]">{pick(user.locale, "配置机构业务和教学评价规则。业务可以自定义，底层权限与数据隔离不可关闭。个人迎宾动效只影响本机。", "Business details and report rules. Access rules stay on. Weather welcome is personal to this browser.")}</p>
       <div className="mt-5">
         <OwnerSettingsForm
           settings={{
@@ -29,6 +29,7 @@ export default async function OwnerSettingsPage() {
             aiOwnerSpotCheck: organization.aiOwnerSpotCheck,
           }}
         />
+        <OwnerPersonalSettings />
       </div>
     </section>
   );

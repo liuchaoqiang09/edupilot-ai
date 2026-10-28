@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { DateField } from "@/components/date-field";
 import { ParentChildFilter } from "@/components/parent-child-filter";
+import { ParentTimeOrder, parseTimeOrder } from "@/components/parent-time-order";
 import { requireRole } from "@/lib/auth";
 import { dayRange, formatDateLabel, shanghaiDateKey, shiftDate } from "@/lib/datetime";
 import { paymentMethodLabel } from "@/lib/enrollment-money";
@@ -25,12 +26,13 @@ function parentPaymentNote(reason: string | null | undefined, refund: boolean) {
 export default async function ParentCoursesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ student?: string; from?: string; to?: string }>;
+  searchParams: Promise<{ student?: string; from?: string; to?: string; order?: string }>;
 }) {
   const user = await requireRole("PARENT", "parent");
   const params = await searchParams;
   const children = await linkedParentChildren(user.organizationId, user.id);
   const studentId = pickLinkedChildId(children, params.student);
+  const order = parseTimeOrder(params.order);
   const from = calendarDate(params.from);
   const to = calendarDate(params.to);
   const invalidRange = Boolean(from && to && from > to);
@@ -57,7 +59,7 @@ export default async function ParentCoursesPage({
             },
             ...(paidWindow && Object.keys(paidWindow).length > 0 ? { paidAt: paidWindow } : {}),
           },
-          orderBy: { paidAt: "desc" },
+          orderBy: { paidAt: order },
           take: 100,
           select: {
             id: true,
@@ -79,7 +81,16 @@ export default async function ParentCoursesPage({
     <section>
       <h1 className="text-[28px] font-semibold tracking-tight">课时与费用</h1>
       <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">只显示已绑定孩子报名过的课程，以及还没有报名、但已经排进课表的课程。按课时显示剩余节数，按周期显示有效期。待缴是折后应缴减去未作废的实收。下方流水含付款与退费，不作废记录不展示。</p>
-      <ParentChildFilter basePath="/parent/courses" childrenList={children} selectedId={studentId} extraParams={{ ...(from ? { from } : {}), ...(to ? { to } : {}) }} />
+      <ParentChildFilter
+        basePath="/parent/courses"
+        childrenList={children}
+        selectedId={studentId}
+        extraParams={{
+          ...(from ? { from } : {}),
+          ...(to ? { to } : {}),
+          ...(order === "asc" ? { order: "asc" } : {}),
+        }}
+      />
       {cards.length === 0 ? (
         <p className="mt-4 rounded-2xl border border-[var(--line)] bg-white px-5 py-12 text-center leading-7 text-[var(--muted)]">还没有报名记录。机构完成报名后，课时和费用会出现在这里。</p>
       ) : (
@@ -101,15 +112,29 @@ export default async function ParentCoursesPage({
       )}
 
       <div className="mt-8">
-        <h2 className="text-base font-semibold">缴费与退费流水</h2>
-        <p className="mt-1 text-xs leading-6 text-[var(--muted)]">只显示已绑定孩子、未作废的流水。可按日期筛选；退费金额为负数。</p>
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold">缴费与退费流水</h2>
+            <p className="mt-1 text-xs leading-6 text-[var(--muted)]">只显示已绑定孩子、未作废的流水。可按日期筛选；退费金额为负数。</p>
+          </div>
+          <ParentTimeOrder
+            basePath="/parent/courses"
+            order={order}
+            extraParams={{
+              ...(studentId ? { student: studentId } : {}),
+              ...(from ? { from } : {}),
+              ...(to ? { to } : {}),
+            }}
+          />
+        </div>
         <form action="/parent/courses" className="mt-3 flex flex-wrap items-center gap-2">
           {studentId ? <input type="hidden" name="student" value={studentId} /> : null}
+          {order === "asc" ? <input type="hidden" name="order" value="asc" /> : null}
           <DateField name="from" defaultValue={from} className="w-36 rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold" />
           <span className="text-xs text-[var(--muted)]">至</span>
           <DateField name="to" defaultValue={to} className="w-36 rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold" />
           <button className="rounded-[10px] border border-[var(--line)] bg-white px-3 py-2 text-xs font-bold">查看流水</button>
-          {from || to || studentId ? <Link href="/parent/courses" className="text-xs font-bold text-[var(--teal)]">重置</Link> : null}
+          {from || to || studentId || order === "asc" ? <Link href="/parent/courses" className="text-xs font-bold text-[var(--teal)]">重置</Link> : null}
         </form>
         <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
           {invalidRange ? (

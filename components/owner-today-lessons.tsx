@@ -46,10 +46,10 @@ export function OwnerTodayLessons({ lessons }: { lessons: TodayLessonCard[] }) {
               <button
                 type="button"
                 onClick={() => setViewing(lesson)}
-                className="grid w-full cursor-pointer grid-cols-[76px_4px_minmax(0,1fr)_auto] items-center gap-3 py-4 text-left transition hover:bg-[#f4faf7]"
+                className="grid w-full cursor-pointer grid-cols-[76px_4px_minmax(0,1fr)_auto] items-center gap-3 py-4 text-left transition duration-200 hover:bg-[linear-gradient(90deg,rgba(223,245,238,.75),transparent)]"
               >
                 <LessonClock start={lesson.startLabel} end={lesson.endLabel} />
-                <span className={`h-10 rounded ${["bg-[#91c8b5]", "bg-[#e8b56d]", "bg-[#b7a6e3]"][index % 3]}`} />
+                <span className={`h-10 rounded shadow-[0_0_10px_rgba(15,122,108,.12)] ${["bg-[linear-gradient(180deg,#a8ddd0,#7ec9b5)]", "bg-[linear-gradient(180deg,#f0c98a,#e8b56d)]", "bg-[linear-gradient(180deg,#9fd4c4,#5fb39a)]"][index % 3]}`} />
                 <div className="min-w-0">
                   <div className="truncate text-sm font-bold">{lesson.courseName} · {lesson.title}</div>
                   <div className="mt-1 text-[11px] leading-5 text-[var(--muted)]">

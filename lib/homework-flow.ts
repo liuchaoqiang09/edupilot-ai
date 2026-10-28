@@ -238,6 +238,7 @@ export async function reviewHomeworkForTeacher(input: {
         : `${when}「${lessonName}」的作业已${status === "COMPLETED" ? "完成" : "批改"}`,
     href,
     dedupeKey: `homework-review:${submission.id}:${status}:${now.toISOString()}`,
+    occurredAt: submission.lessonSession.startAt,
   });
 
   refreshParentTeacher(seat?.id, submission.lessonSessionId);

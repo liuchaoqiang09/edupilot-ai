@@ -1,20 +1,23 @@
 import Link from "next/link";
 import { ParentChildFilter } from "@/components/parent-child-filter";
+import { ParentTimeOrder, parseTimeOrder } from "@/components/parent-time-order";
 import { requireRole } from "@/lib/auth";
 import { formatDateLabel, shanghaiDateKey } from "@/lib/datetime";
 import { resultDisplay } from "@/lib/exam";
+import { markExamRead } from "@/lib/exam-flow";
 import { linkedParentChildren, pickLinkedChildId } from "@/lib/parent-scope";
 import { prisma } from "@/lib/prisma";
 
 export default async function ParentExamsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ student?: string }>;
+  searchParams: Promise<{ student?: string; order?: string }>;
 }) {
   const user = await requireRole("PARENT", "parent");
   const params = await searchParams;
   const children = await linkedParentChildren(user.organizationId, user.id);
   const studentId = pickLinkedChildId(children, params.student);
+  const order = parseTimeOrder(params.order);
   const studentIds = studentId ? [studentId] : children.map((child) => child.id);
 
   const results = studentIds.length === 0
@@ -50,15 +53,40 @@ export default async function ParentExamsPage({
             },
           },
         },
-        orderBy: { exam: { examDate: "desc" } },
+        orderBy: { exam: { examDate: order } },
         take: 40,
       });
+
+  // 列表已展示分数，按可见成绩记已读，避免只进列表不算已读。
+  await Promise.all(
+    results.map((row) =>
+      markExamRead({
+        organizationId: user.organizationId,
+        parentUserId: user.id,
+        examId: row.exam.id,
+        studentId: row.studentId,
+      }),
+    ),
+  );
 
   return (
     <section>
       <h1 className="text-[28px] font-semibold tracking-tight">成绩</h1>
       <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">只显示教师已发布、且已录入的孩子成绩。看不到其他学生的分数。课堂报告与作业仍在各自栏目。</p>
-      <ParentChildFilter basePath="/parent/exams" childrenList={children} selectedId={studentId} />
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <ParentChildFilter
+          basePath="/parent/exams"
+          childrenList={children}
+          selectedId={studentId}
+          extraParams={order === "asc" ? { order: "asc" } : {}}
+          className="flex flex-wrap items-center gap-2"
+        />
+        <ParentTimeOrder
+          basePath="/parent/exams"
+          order={order}
+          extraParams={studentId ? { student: studentId } : {}}
+        />
+      </div>
       <div className="mt-6 space-y-3">
         {results.length === 0 ? (
           <p className="rounded-2xl border border-[var(--line)] bg-white px-4 py-12 text-center text-sm text-[var(--muted)]">还没有已发布的成绩。</p>

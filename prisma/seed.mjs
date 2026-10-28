@@ -9,6 +9,10 @@ if (process.env.NODE_ENV === "production") {
   console.error("生产环境禁止运行种子脚本。");
   process.exit(1);
 }
+if (process.env.SEED_ENABLED !== "true") {
+  console.error("未开启 SEED_ENABLED=true，拒绝写入演示数据。");
+  process.exit(1);
+}
 
 const prisma = new PrismaClient();
 const password = "edupilot2026";

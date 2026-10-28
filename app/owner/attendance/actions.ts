@@ -10,7 +10,7 @@ import { createMakeupRow } from "@/lib/makeup";
 import { notifyMakeupArranged } from "@/lib/parent-notice";
 import { prisma } from "@/lib/prisma";
 
-export type MakeupResult = { ok: boolean; message?: string; sourceId?: string };
+export type MakeupResult = { ok: boolean; message?: string; sourceId?: string; warning?: string };
 
 export async function convertAbsentToLeaveForMakeup(lessonStudentId: string, formData: FormData): Promise<MakeupResult> {
   const user = await requireRole("OWNER", "owner");
@@ -63,11 +63,13 @@ export async function scheduleMakeup(sourceId: string, formData: FormData): Prom
     select: {
       id: true,
       studentId: true,
+      seat: true,
       lessonSession: { select: { id: true, courseId: true, startAt: true, title: true, status: true } },
-      student: { select: { name: true } },
+      student: { select: { name: true, status: true } },
     },
   });
   if (!source || source.lessonSession.status === "CANCELLED") return { ok: false, message: "只能给请假记录安排补课。" };
+  if (source.student.status !== "ACTIVE") return { ok: false, message: "这名学生已停用，不能安排补课。" };
   const already = await prisma.lessonStudent.findFirst({
     where: { organizationId: user.organizationId, makeupSourceId: source.id },
     select: { id: true },
@@ -79,14 +81,38 @@ export async function scheduleMakeup(sourceId: string, formData: FormData): Prom
       id: true,
       title: true,
       startAt: true,
+      endAt: true,
       classGroupId: true,
       courseId: true,
+      classroom: { select: { capacity: true, name: true } },
       students: { where: { studentId: source.studentId }, select: { id: true } },
+      _count: { select: { students: true } },
     },
   });
   if (!target) return { ok: false, message: "请选择同一门课、尚未取消的课次。" };
   if (target.id === source.lessonSession.id) return { ok: false, message: "不能补到原来请假的那一节。" };
   if (target.students.length > 0) return { ok: false, message: "这名学生已经在那节课的名单里。" };
+  const overlap = await prisma.lessonSession.findFirst({
+    where: {
+      organizationId: user.organizationId,
+      id: { not: target.id },
+      status: { not: "CANCELLED" },
+      startAt: { lt: target.endAt },
+      endAt: { gt: target.startAt },
+      students: { some: { studentId: source.studentId } },
+    },
+    select: { title: true },
+  });
+  const capacity = target.classroom?.capacity ?? null;
+  const tooMany = capacity != null && target._count.students + 1 > capacity;
+  if ((overlap || tooMany) && formData.get("acknowledgeConflict") !== "1") {
+    const lines = [
+      overlap ? `${source.student.name}在同一时间已有课次「${overlap.title ?? "课次"}」。` : "",
+      tooMany ? `加入后有 ${target._count.students + 1} 人，教室「${target.classroom?.name ?? "教室"}」可坐 ${capacity} 人。` : "",
+      "再次确认仍会加入。",
+    ].filter(Boolean);
+    return { ok: false, message: lines.join("\n"), warning: lines.join("\n") };
+  }
   const when = formatMonthDay(shanghaiDateKey(source.lessonSession.startAt));
   let created: string;
   try {
@@ -99,6 +125,7 @@ export async function scheduleMakeup(sourceId: string, formData: FormData): Prom
         studentId: source.studentId,
         studentName: source.student.name,
         sourceId: source.id,
+        sourceSeat: source.seat,
         lastAction: `补 ${when}的请假`,
       });
       await writeAudit(tx, {

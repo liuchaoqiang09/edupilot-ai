@@ -1,5 +1,6 @@
 import { ReportReplyForm } from "@/app/parent/reports/reply-form";
 import { ParentChildFilter } from "@/components/parent-child-filter";
+import { ParentTimeOrder, parseTimeOrder } from "@/components/parent-time-order";
 import { requireRole } from "@/lib/auth";
 import { formatClock, formatDateLabel, shanghaiDateKey } from "@/lib/datetime";
 import { linkedParentChildren, pickLinkedChildId } from "@/lib/parent-scope";
@@ -10,22 +11,42 @@ import { reportsVisibleToParent } from "@/lib/report-flow";
 export default async function ParentReportsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ student?: string }>;
+  searchParams: Promise<{ student?: string; order?: string; focus?: string }>;
 }) {
   const user = await requireRole("PARENT", "parent");
   const params = await searchParams;
   const children = await linkedParentChildren(user.organizationId, user.id);
   const studentId = pickLinkedChildId(children, params.student);
+  const order = parseTimeOrder(params.order);
+  const focusId = typeof params.focus === "string" ? params.focus.trim() : "";
   const all = await reportsVisibleToParent(prisma, { id: user.id, organizationId: user.organizationId });
-  const reports = studentId ? all.filter((report) => report.studentId === studentId) : all;
-  // 服务端在返回页面前写入已读，即使家长马上关掉网页，已打开的报告也会记上。
-  await markPublishedReportsRead(user.organizationId, user.id, reports.map((report) => report.id));
+  const filtered = studentId ? all.filter((report) => report.studentId === studentId) : all;
+  const reports = [...filtered].sort((left, right) => {
+    const delta = left.lessonSession.startAt.getTime() - right.lessonSession.startAt.getTime();
+    return order === "asc" ? delta : -delta;
+  });
+  // 从消息深链只记这一份；主动打开列表仍记本页可见报告为已读。
+  const markIds = focusId ? reports.filter((report) => report.id === focusId).map((report) => report.id) : reports.map((report) => report.id);
+  await markPublishedReportsRead(user.organizationId, user.id, markIds);
 
   return (
     <section>
       <h1 className="text-[28px] font-semibold tracking-tight">学习报告</h1>
       <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">只显示教师确认并发布、且属于已绑定孩子的报告。草稿、退回内容和教师内部备注都不会出现在这里。</p>
-      <ParentChildFilter basePath="/parent/reports" childrenList={children} selectedId={studentId} />
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <ParentChildFilter
+          basePath="/parent/reports"
+          childrenList={children}
+          selectedId={studentId}
+          extraParams={order === "asc" ? { order: "asc" } : {}}
+          className="flex flex-wrap items-center gap-2"
+        />
+        <ParentTimeOrder
+          basePath="/parent/reports"
+          order={order}
+          extraParams={studentId ? { student: studentId } : {}}
+        />
+      </div>
       <div className="mt-6 space-y-4">
         {reports.length === 0 ? <p className="rounded-2xl border border-[var(--line)] bg-white px-4 py-12 text-center text-sm text-[var(--muted)]">还没有已发布的报告。</p> : reports.map((report) => (
           <article key={report.id} className="overflow-hidden rounded-2xl border border-[var(--line)] bg-white p-5">

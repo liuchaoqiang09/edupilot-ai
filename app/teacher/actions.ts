@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { AttendanceStatus, Prisma } from "@prisma/client";
+import { AttendanceStatus, LeaveKind, Prisma } from "@prisma/client";
 import { writeAudit } from "@/lib/audit";
 import { requireRole } from "@/lib/auth";
 import { recordPayment } from "@/lib/billing-ledger";
@@ -40,18 +40,32 @@ export async function saveAttendance(lessonId: string, formData: FormData): Prom
   if (!lesson) return { ok: false, message: "这节课不存在，或你不是授课教师，不能修改考勤。" };
 
   const inactiveSkipped: string[] = [];
-  const updates = lesson.students.flatMap((row) => {
+  type AttendanceUpdate = {
+    id: string;
+    studentId: string;
+    seat: (typeof lesson.students)[number]["seat"];
+    student: (typeof lesson.students)[number]["student"];
+    note: string;
+  } & (
+    | { invalid: true; status: string; leaveKind: null }
+    | { invalid: false; status: AttendanceStatus; leaveKind: LeaveKind | null }
+  );
+  const updates: AttendanceUpdate[] = [];
+  for (const row of lesson.students) {
     const raw = String(formData.get(`status:${row.studentId}`) ?? "");
     const note = String(formData.get(`note:${row.studentId}`) ?? "").trim();
-    if (!raw) return [];
+    if (!raw) continue;
     const fields = toAttendanceFields(raw);
-    if (!fields) return [{ ...row, invalid: true as const, note, status: raw, leaveKind: null }];
+    if (!fields) {
+      updates.push({ ...row, invalid: true, note, status: raw, leaveKind: null });
+      continue;
+    }
     if (row.student.status !== "ACTIVE") {
       inactiveSkipped.push(row.student.name);
-      return [];
+      continue;
     }
-    return [{ ...row, invalid: false as const, note, status: fields.status, leaveKind: fields.leaveKind }];
-  });
+    updates.push({ ...row, invalid: false, note, status: fields.status, leaveKind: fields.leaveKind });
+  }
   if (updates.length === 0 && inactiveSkipped.length === 0 && lesson.students.length === 0) {
     return { ok: true, message: "这节课没有学生，无需保存考勤。" };
   }
@@ -450,6 +464,7 @@ export async function scheduleTeacherMakeup(sourceId: string, formData: FormData
     select: {
       id: true,
       studentId: true,
+      seat: true,
       lessonSession: { select: { id: true, courseId: true, startAt: true, title: true, status: true } },
       student: { select: { name: true, status: true } },
     },
@@ -511,6 +526,7 @@ export async function scheduleTeacherMakeup(sourceId: string, formData: FormData
         studentId: source.studentId,
         studentName: source.student.name,
         sourceId: source.id,
+        sourceSeat: source.seat,
         lastAction: `补 ${when}`,
       });
       await writeAudit(tx, {

@@ -812,11 +812,14 @@ model ParentNotice {
   body           String
   href           String
   dedupeKey      String
+  /// 业务相关时间（考试日、上课时间等），列表按此排序；createdAt 仍是送达时间。
+  occurredAt     DateTime         @default(now())
   readAt         DateTime?
   createdAt      DateTime         @default(now())
 
   @@unique([parentUserId, dedupeKey])
   @@index([organizationId, parentUserId, readAt])
+  @@index([organizationId, parentUserId, occurredAt])
   @@schema("edupilot")
 }
 

@@ -1,6 +1,8 @@
 import { revalidatePath } from "next/cache";
 import { getCurrentUser } from "@/lib/auth";
+import { limitReportGenerate, rateLimitResponse } from "@/lib/ai-rate";
 import { AiReportError, generateLessonAnalysis } from "@/lib/ai-service";
+import { opsLog } from "@/lib/ops-log";
 import { prisma } from "@/lib/prisma";
 import { generateAndStoreDraft, readOrgReportSettings, recentSummariesForPrompt } from "@/lib/report-flow";
 
@@ -14,6 +16,11 @@ function fail(message: string, status: number) {
 export async function POST(request: Request) {
   const user = await getCurrentUser();
   if (!user?.roles.includes("TEACHER")) return fail("只有授课教师可以生成报告。", 403);
+  const limited = limitReportGenerate(user.id);
+  if (!limited.ok) {
+    opsLog("warn", "ai.generate.rate_limited", { userId: user.id, retryAfterSec: limited.retryAfterSec });
+    return rateLimitResponse(limited.retryAfterSec);
+  }
 
   const body = await request.json().catch(() => null);
   const lessonId = body && typeof body === "object" && "lessonId" in body && typeof body.lessonId === "string" ? body.lessonId : "";
@@ -105,6 +112,12 @@ export async function POST(request: Request) {
       results.push({ name: row.student.name, ok: true, message: "已生成草稿。" });
     } catch (error) {
       const message = error instanceof AiReportError ? error.message : "生成失败，教学记录已保留。";
+      opsLog("warn", "ai.generate.student_failed", {
+        userId: user.id,
+        lessonId: lesson.id,
+        studentId: row.studentId,
+        message,
+      });
       results.push({ name: row.student.name, ok: false, message });
     }
   }
@@ -114,6 +127,13 @@ export async function POST(request: Request) {
   revalidatePath("/owner/reports");
   revalidatePath("/parent/reports");
   const failed = results.filter((item) => !item.ok);
+  opsLog(failed.length === 0 ? "info" : "warn", "ai.generate.done", {
+    userId: user.id,
+    lessonId: lesson.id,
+    ok: failed.length === 0,
+    failed: failed.length,
+    total: results.length,
+  });
   return Response.json({
     ok: failed.length === 0,
     results,

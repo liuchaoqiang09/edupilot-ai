@@ -247,7 +247,17 @@ export function StudentDirectory({
 
       <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1160px] border-collapse text-left text-xs">
+          <table className="w-full min-w-[960px] table-fixed border-collapse text-left text-xs">
+            <colgroup>
+              <col className="w-[14%]" />
+              <col className="w-[12%]" />
+              <col className="w-[10%]" />
+              <col className="w-[8%]" />
+              <col className="w-[7%]" />
+              <col className="w-[20%]" />
+              <col className="w-[9%]" />
+              <col className="w-[20%]" />
+            </colgroup>
             <thead className="bg-[#fafbf9] text-[10px] tracking-wide text-[#84918e]">
               <tr>
                 <SortHeader label={t("学生", "Student")} field="name" sortBy={sortBy} order={order} pathname="/owner/students" query={query} extra={statusFilter ? { status: statusFilter } : undefined} />
