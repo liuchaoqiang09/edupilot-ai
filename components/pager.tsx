@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 export const pageSize = 20;
-export const billingPageSize = 10;
+export const billingPageSize = 20;
 
 export function pageOf(value: string | undefined, total: number, size = pageSize) {
   const pages = Math.max(1, Math.ceil(total / size));

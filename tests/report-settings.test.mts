@@ -399,6 +399,9 @@ function draftScope(org: Awaited<ReturnType<typeof seedOrg>>, row: Awaited<Retur
 }
 
 async function cleanup(organizationId: string) {
+  await prisma.reportReply.deleteMany({ where: { organizationId } });
+  await prisma.reportRead.deleteMany({ where: { organizationId } });
+  await prisma.parentNotice.deleteMany({ where: { organizationId } });
   await prisma.teachingReport.deleteMany({ where: { organizationId } });
   await prisma.teachingRecord.deleteMany({ where: { organizationId } });
   await prisma.lessonStudent.deleteMany({ where: { organizationId } });

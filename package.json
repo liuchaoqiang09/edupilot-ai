@@ -11,6 +11,8 @@
     "db:seed": "node prisma/seed.mjs",
     "demo:reset": "node prisma/demo-reset.mjs",
     "demo:passwords": "node prisma/reset-demo-passwords.mjs",
+    "beta:preflight": "node scripts/beta-preflight.mjs",
+    "beta:ensure-demo": "node scripts/ensure-beta-demo.mjs",
     "lessons:archive": "node --experimental-strip-types --import ./tests/resolve-ts.mjs prisma/archive-old-lessons.mjs",
     "test": "node --test --experimental-strip-types --import ./tests/resolve-ts.mjs ./tests/*.test.ts ./tests/*.test.mts",
     "test:core": "node --test --experimental-strip-types --import ./tests/resolve-ts.mjs ./tests/assistant-policy.test.ts ./tests/assistant-mode.test.ts ./tests/assistant-help-intent.test.ts ./tests/assistant-parent-boundary.test.ts ./tests/tenant-isolation.test.ts ./tests/makeup.test.ts ./tests/trial-convert.test.ts ./tests/exam.test.ts ./tests/exam-gaps.test.ts ./tests/exam-flow.sim.test.ts ./tests/homework.test.ts ./tests/homework-flow.sim.test.ts ./tests/lesson-seat-rules.test.ts ./tests/leave-kind-charge.test.ts ./tests/attendance-desk.test.ts"

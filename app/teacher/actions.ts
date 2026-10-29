@@ -696,6 +696,7 @@ export async function convertTeacherTrial(lessonStudentId: string, formData: For
         actorId: user.id,
         studentId: seat.student.id,
         courseIds: [seat.lessonSession.courseId],
+        primaryLessonStudentId: seat.id,
         detailPrefix: "教师把试听",
       });
     });

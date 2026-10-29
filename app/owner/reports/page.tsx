@@ -146,9 +146,11 @@ export default async function OwnerReportsPage({
       reports={orderedReports.slice(window.start, window.start + 20)}
       selectedReportId={reportId}
     />
-    <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
-      <Pager page={window.page} pages={window.pages} href={pageHref} />
-    </div>
+    {window.pages > 1 ? (
+      <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
+        <Pager page={window.page} pages={window.pages} href={pageHref} />
+      </div>
+    ) : null}
     </>
   );
 }

@@ -9,13 +9,16 @@ import { parentCanSeeResult } from "@/lib/exam";
 import { prisma } from "@/lib/prisma";
 
 test("EX-SIM Phase A 教师发布与家长可见闭环", async () => {
-  const org = await prisma.organization.findFirst({ select: { id: true } });
-  assert.ok(org, "需要已有演示机构");
   const teacher = await prisma.teacher.findFirst({
-    where: { organizationId: org.id, status: "ACTIVE", userId: { not: null }, classGroups: { some: { status: "ACTIVE", enrollments: { some: { student: { status: "ACTIVE" } } } } } },
-    select: { id: true, userId: true, name: true, user: { select: { id: true, name: true } } },
+    where: {
+      status: "ACTIVE",
+      userId: { not: null },
+      classGroups: { some: { status: "ACTIVE", enrollments: { some: { student: { status: "ACTIVE" } } } } },
+    },
+    select: { id: true, organizationId: true, userId: true, name: true, user: { select: { id: true, name: true } } },
   });
   assert.ok(teacher?.userId && teacher.user, "需要有登录账号的主讲教师");
+  const org = { id: teacher.organizationId };
   const classGroup = await prisma.classGroup.findFirst({
     where: { organizationId: org.id, teacherId: teacher.id, status: "ACTIVE", enrollments: { some: { student: { status: "ACTIVE" } } } },
     select: { id: true, name: true },

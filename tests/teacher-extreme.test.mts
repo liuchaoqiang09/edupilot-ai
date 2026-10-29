@@ -181,5 +181,5 @@ test("markAllPresent preserves approved leave in teacher-schedule", async () => 
   const source = await import("node:fs/promises").then((fs) =>
     fs.readFile(fileURLToPath(new URL("../components/teacher-schedule.tsx", import.meta.url)), "utf8"),
   );
-  assert.match(source, /parentLeave \|\| prior\.status === "LEAVE"/);
+  assert.match(source, /parentLeave \|\| prior\.status === "PERSONAL" \|\| prior\.status === "SICK" \|\| student\.attendanceStatus === "LEAVE"/);
 });

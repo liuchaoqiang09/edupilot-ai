@@ -119,7 +119,7 @@ export function StudentDirectory({
   const [importFailures, setImportFailures] = useState<ImportFailure[]>([]);
 
   function downloadTemplate() {
-    const csv = "\uFEFF姓名*,年级,年龄,家长手机号,备注\r\n张三,初二,13,13800000000,无\r\n";
+    const csv = "\uFEFF姓名*,年级,年龄,家长手机号,备注\r\n张三,初二,13,13800000000,请删除本行\r\n";
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a");
     link.href = url;

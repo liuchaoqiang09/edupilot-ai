@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { rateLimitKey, takeRateLimit } from "@/lib/rate-limit";
 import { homePathForRoles } from "@/lib/roles";
 import { signSession, SESSION_COOKIE } from "@/lib/session";
 
@@ -28,6 +29,17 @@ export async function POST(request: Request) {
 
   if (!email || !password || email.length > 200 || password.length > 200) {
     return NextResponse.json({ message: "请输入账号和密码。" }, { status: 400 });
+  }
+
+  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || request.headers.get("x-real-ip") || "unknown";
+  const byEmail = takeRateLimit(rateLimitKey(["login-email", email]), { limit: 10, windowMs: 15 * 60_000 });
+  const byIp = takeRateLimit(rateLimitKey(["login-ip", ip]), { limit: 40, windowMs: 15 * 60_000 });
+  if (!byEmail.ok || !byIp.ok) {
+    const retry = Math.max(byEmail.ok ? 1 : byEmail.retryAfterSec, byIp.ok ? 1 : byIp.retryAfterSec);
+    return NextResponse.json(
+      { message: `尝试次数过多，请约 ${retry} 秒后再试。` },
+      { status: 429, headers: { "retry-after": String(retry) } },
+    );
   }
 
   const user = await prisma.user.findUnique({

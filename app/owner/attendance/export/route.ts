@@ -15,6 +15,7 @@ export async function GET(request: Request) {
   const user = await requireRole("OWNER", "owner");
   const params = new URL(request.url).searchParams;
   const status = statusFromLabel(params.get("status"));
+  const query = params.get("q")?.trim() ?? "";
   const sort = readSort(params.get("sortBy") ?? undefined, params.get("order") ?? undefined, ["date"] as const);
   const today = shanghaiDateKey();
   const orderBy: Prisma.LessonStudentOrderByWithRelationInput[] = [
@@ -25,6 +26,7 @@ export async function GET(request: Request) {
     where: {
       organizationId: user.organizationId,
       ...(status ? { attendanceStatus: status } : {}),
+      ...(query ? { student: { name: { contains: query } } } : {}),
       lessonSession: { startAt: { gte: dayRange(shiftDate(today, -6)).start, lt: dayRange(today).end }, status: { not: "CANCELLED" } },
     },
     select: {

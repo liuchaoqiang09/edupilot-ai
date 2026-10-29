@@ -181,9 +181,11 @@ export default async function OwnerSchedulePage({
       }))}
       teachers={teachers.map((teacher) => ({ id: teacher.id, name: teacher.name, linked: teacher.user?.roles.includes("TEACHER") ?? false }))}
     />
-    <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
-      <Pager page={window.page} pages={window.pages} href={pageHref} />
-    </div>
+    {window.pages > 1 ? (
+      <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
+        <Pager page={window.page} pages={window.pages} href={pageHref} />
+      </div>
+    ) : null}
     </>
   );
 }

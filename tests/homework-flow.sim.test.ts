@@ -8,23 +8,22 @@ import { reviewHomeworkForTeacher, submitHomeworkForParent } from "@/lib/homewor
 import { prisma } from "@/lib/prisma";
 
 test("HW-SIM 家长提交与教师批改/退回闭环", async () => {
-  const org = await prisma.organization.findFirst({ select: { id: true } });
-  assert.ok(org);
   const seat = await prisma.lessonStudent.findFirst({
     where: {
-      organizationId: org.id,
       lessonSession: { status: { not: "CANCELLED" }, teacher: { status: "ACTIVE", userId: { not: null } } },
-      student: { status: "ACTIVE", parentLinks: { some: { organizationId: org.id } } },
+      student: { status: "ACTIVE", parentLinks: { some: {} } },
     },
     select: {
       id: true,
+      organizationId: true,
       studentId: true,
       lessonSessionId: true,
       lessonSession: { select: { teacherId: true } },
-      student: { select: { parentLinks: { where: { organizationId: org.id }, select: { parentUserId: true }, take: 1 } } },
+      student: { select: { parentLinks: { select: { parentUserId: true, organizationId: true }, take: 1 } } },
     },
   });
   assert.ok(seat?.student.parentLinks[0], "需要有家长绑定的在册课次");
+  const org = { id: seat.organizationId };
   const parentUserId = seat.student.parentLinks[0].parentUserId;
   const teacherId = seat.lessonSession.teacherId;
 

@@ -133,9 +133,11 @@ export function TeacherExamEditor(props: {
           ) : null}
           {message ? <p className={`text-sm ${failed ? "text-[#9a3434]" : "text-[#34725d]"}`}>{message}</p> : null}
           <div className="flex flex-wrap gap-2">
-            <button type="submit" name="save" disabled={pending} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold disabled:opacity-60">
-              {pending ? "保存中…" : "保存草稿"}
-            </button>
+            {props.status !== "PUBLISHED" ? (
+              <button type="submit" name="save" disabled={pending} className="rounded-[10px] border border-[var(--line)] bg-white px-3.5 py-2.5 text-xs font-bold disabled:opacity-60">
+                {pending ? "保存中…" : "保存草稿"}
+              </button>
+            ) : null}
             <button type="submit" name="publish" disabled={pending} className="rounded-[10px] bg-[var(--teal)] px-3.5 py-2.5 text-xs font-bold text-white disabled:opacity-60">
               {props.status === "PUBLISHED" ? "保存并重新通知家长" : "发布给家长"}
             </button>

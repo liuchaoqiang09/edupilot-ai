@@ -103,9 +103,10 @@ test("assistant revenue tool is registered and filters voided payments", async (
   assert.match(source, /get_revenue_summary/);
   assert.match(source, /voidedAt:\s*null/);
   assert.match(source, /Asia\/Shanghai/);
+  assert.match(source, /禁止自行估算或编造/);
   const agent = await import("node:fs/promises").then((fs) =>
     fs.readFile(fileURLToPath(new URL("../lib/assistant-agent.ts", import.meta.url)), "utf8"),
   );
-  assert.match(agent, /get_revenue_summary/);
-  assert.match(agent, /禁止自行估算或编造/);
+  // 收入查询挂在 assistant-ops 的 lookupTools，由 agent 组装工具表。
+  assert.match(agent, /lookupTools/);
 });

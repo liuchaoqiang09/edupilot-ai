@@ -20,11 +20,22 @@
   --card-shadow-hover: 0 14px 36px rgba(18, 51, 56, 0.1);
 }
 
+html {
+  /* 去掉页面底部整宽横向滚动条；右侧纵向滚动条保留 */
+  overflow-x: hidden;
+}
+
 body {
   margin: 0;
+  overflow-x: hidden;
   background: var(--paper);
   color: var(--ink);
   font-family: Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+[data-workspace] {
+  max-width: 100vw;
+  overflow-x: hidden;
 }
 
 /* —— Shared workspace ambient (layout unchanged) —— */

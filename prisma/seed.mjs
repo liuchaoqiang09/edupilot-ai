@@ -5,17 +5,14 @@ import { pathToFileURL } from "node:url";
 
 process.loadEnvFile(".env");
 
-if (process.env.NODE_ENV === "production") {
-  console.error("生产环境禁止运行种子脚本。");
-  process.exit(1);
-}
-if (process.env.SEED_ENABLED !== "true") {
-  console.error("未开启 SEED_ENABLED=true，拒绝写入演示数据。");
-  process.exit(1);
-}
-
 const prisma = new PrismaClient();
-const password = "edupilot2026";
+export const DEMO_PASSWORD = "edupilot2026";
+export const DEMO_EMAILS = [
+  "demo_owner@edupilot.test",
+  "demo_teacher@edupilot.test",
+  "demo_parent@edupilot.test",
+];
+const password = DEMO_PASSWORD;
 const organizationName = "启明星素质成长中心";
 
 function shanghaiKey(date = new Date()) {
@@ -37,18 +34,34 @@ function onDay(dateKey, hour, minute) {
 
 async function clearBusinessData() {
   await prisma.$transaction(async (tx) => {
+    await tx.homeworkAsset.deleteMany();
+    await tx.homeworkSubmission.deleteMany();
+    await tx.reportPhoto.deleteMany();
+    await tx.reportReply.deleteMany();
+    await tx.reportRead.deleteMany();
+    await tx.examRead.deleteMany();
+    await tx.examResult.deleteMany();
+    await tx.exam.deleteMany();
+    await tx.parentNotice.deleteMany();
+    await tx.lessonChangeRequest.deleteMany();
     await tx.teachingReport.deleteMany();
     await tx.teachingRecord.deleteMany();
     await tx.lessonStudent.deleteMany();
+    await tx.hourAdjustment.deleteMany();
+    await tx.payment.deleteMany();
+    await tx.renewalFollowUp.deleteMany();
     await tx.courseHourBalance.deleteMany();
     await tx.enrollment.deleteMany();
     await tx.lessonSession.deleteMany();
+    await tx.classWaitlist.deleteMany();
     await tx.membershipInvite.deleteMany();
     await tx.parentStudentLink.deleteMany();
     await tx.auditLog.deleteMany();
     await tx.classGroup.deleteMany();
+    await tx.teacherCourse.deleteMany();
     await tx.course.deleteMany();
     await tx.teacher.deleteMany();
+    await tx.classroom.deleteMany();
     await tx.user.deleteMany();
     await tx.student.deleteMany();
     await tx.organization.deleteMany();
@@ -516,6 +529,14 @@ export async function seedDemoOrganization(prisma) {
 }
 
 async function main() {
+  if (process.env.NODE_ENV === "production") {
+    console.error("生产环境禁止运行种子脚本（会清空业务数据）。内测请用：npm run beta:ensure-demo");
+    process.exit(1);
+  }
+  if (process.env.SEED_ENABLED !== "true") {
+    console.error("未开启 SEED_ENABLED=true，拒绝写入演示数据。");
+    process.exit(1);
+  }
   await clearBusinessData();
   await seedDemoOrganization(prisma);
 }

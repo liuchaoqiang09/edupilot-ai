@@ -33,9 +33,6 @@ export async function resolveLessonSeat(
   },
 ): Promise<{ seat: LessonSeatKind; lastAction: string }> {
   const requested = normalizeRequestedSeat(input.requested);
-  if (requested === "TRIAL") {
-    return { seat: "TRIAL", lastAction: seatLastAction("TRIAL") };
-  }
 
   const enrollments = await db.enrollment.findMany({
     where: {
@@ -48,6 +45,15 @@ export async function resolveLessonSeat(
   });
   const inThisClass = enrollments.some((row) => row.classGroupId === input.classGroupId);
   const inCourse = enrollments.length > 0;
+
+  if (requested === "TRIAL") {
+    if (inCourse) {
+      throw new CourseHourError(
+        `${input.studentName}已报名该课程，不能再按试听加入。本班请选「本班」，跨班请选「临时」。`,
+      );
+    }
+    return { seat: "TRIAL", lastAction: seatLastAction("TRIAL") };
+  }
 
   if (requested === "ENROLLED") {
     if (inThisClass) return { seat: "ENROLLED", lastAction: seatLastAction("ENROLLED") };
@@ -141,11 +147,11 @@ export async function repairInvalidEnrolledSeats(db: Db, organizationId?: string
     const inClass = enrollments.some((item) => item.classGroupId === row.lessonSession.classGroupId);
     if (inClass) continue;
     if (enrollments.length > 0) {
-      await db.lessonStudent.update({
-        where: { id: row.id },
+      const updated = await db.lessonStudent.updateMany({
+        where: { id: row.id, seat: "ENROLLED", hoursCharged: false },
         data: { seat: "GUEST", lastAction: "跨班修正为临时" },
       });
-      converted += 1;
+      if (updated.count === 1) converted += 1;
     } else {
       const locked = await db.lessonStudent.findFirst({
         where: { id: row.id },

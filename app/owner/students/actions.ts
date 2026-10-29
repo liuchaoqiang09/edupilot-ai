@@ -130,7 +130,15 @@ export async function importStudents(formData: FormData): Promise<ImportResult> 
   if (!columns.has("name")) return { ok: false, created: 0, failed: [], message: "表头需要包含「姓名」。请使用下载的模板。" };
 
   const failed: ImportFailure[] = [];
-  const ready: { row: number; name: string; grade: string | null; age: number | null; contactNote: string | null; studentNo: string | null }[] = [];
+  const ready: {
+    row: number;
+    name: string;
+    grade: string | null;
+    age: number | null;
+    guardianPhone: string | null;
+    contactNote: string | null;
+    studentNo: string | null;
+  }[] = [];
   const seenNos = new Set<string>();
   for (const record of table.slice(1, 501)) {
     const name = cellAt(record.cells, columns, "name");
@@ -140,6 +148,14 @@ export async function importStudents(formData: FormData): Promise<ImportResult> 
     const note = cellAt(record.cells, columns, "note");
     const studentNo = cellAt(record.cells, columns, "studentNo");
     if (!name && !grade && !ageText && !phone && !note && !studentNo) continue;
+    // 跳过下载模板里的示例行，避免误导入「张三」（备注清空或仍含删除提示时同样跳过）。
+    if (
+      name === "张三" &&
+      phone === "13800000000" &&
+      (!note || note === "无" || note === "示例" || note.includes("删除") || note.includes("示例"))
+    ) {
+      continue;
+    }
     if (!name) {
       failed.push({ row: record.line, reason: "姓名为空" });
       continue;
@@ -169,8 +185,7 @@ export async function importStudents(formData: FormData): Promise<ImportResult> 
       failed.push({ row: record.line, reason: "编号在文件中重复" });
       continue;
     }
-    const contactNote = [phone ? `家长手机号：${phone}` : "", note].filter(Boolean).join("；");
-    if (contactNote.length > 200) {
+    if (note.length > 200) {
       failed.push({ row: record.line, reason: "备注过长" });
       continue;
     }
@@ -180,7 +195,8 @@ export async function importStudents(formData: FormData): Promise<ImportResult> 
       name,
       grade: grade || null,
       age: parsedAge.age,
-      contactNote: contactNote || null,
+      guardianPhone: phone || null,
+      contactNote: note || null,
       studentNo: studentNo || null,
     });
   }
@@ -218,6 +234,7 @@ export async function importStudents(formData: FormData): Promise<ImportResult> 
           studentNo,
           grade: row.grade,
           age: row.age,
+          guardianPhone: row.guardianPhone,
           contactNote: row.contactNote,
         },
       });

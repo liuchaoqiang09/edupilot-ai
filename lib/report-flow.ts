@@ -209,7 +209,18 @@ export async function returnReportByOwner(
   reportId: string,
   reason: string,
 ) {
-  return db.$transaction(async (tx) => {
+  const before = await db.teachingReport.findFirst({
+    where: { id: reportId, organizationId: actor.organizationId },
+    select: {
+      id: true,
+      status: true,
+      studentId: true,
+      lessonSession: { select: { startAt: true, course: { select: { name: true } } } },
+    },
+  });
+  if (!before) return { ok: false as const, message: "这份报告不存在，或已经退回。" };
+  const wasPublished = before.status === "PUBLISHED";
+  const result = await db.$transaction(async (tx) => {
     const updated = await tx.teachingReport.updateMany({
       where: {
         id: reportId,
@@ -219,6 +230,9 @@ export async function returnReportByOwner(
       data: { status: "RETURNED", revisionNote: reason },
     });
     if (updated.count !== 1) return { ok: false as const, message: "这份报告不存在，或已经退回。" };
+    if (wasPublished) {
+      await tx.reportRead.deleteMany({ where: { organizationId: actor.organizationId, reportId } });
+    }
     await writeAudit(tx, {
       organizationId: actor.organizationId,
       actorId: actor.id,
@@ -229,6 +243,18 @@ export async function returnReportByOwner(
     });
     return { ok: true as const };
   });
+  if (result.ok && wasPublished) {
+    const { notifyReportReturned } = await import("./parent-notice");
+    await notifyReportReturned({
+      organizationId: actor.organizationId,
+      reportId: before.id,
+      studentId: before.studentId,
+      courseName: before.lessonSession.course.name,
+      when: before.lessonSession.startAt,
+      reason,
+    });
+  }
+  return result;
 }
 
 export async function reportsVisibleToParent(db: Db, actor: { id: string; organizationId: string }) {

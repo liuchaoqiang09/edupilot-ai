@@ -1,7 +1,6 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { Prisma } from "@prisma/client";
 import { adjustLessonHours, recordPayment, voidPayment } from "@/lib/billing-ledger";
 import { requireRole } from "@/lib/auth";
 import { CourseHourError } from "@/lib/course-hours";
@@ -68,19 +67,6 @@ async function savePayment(formData: FormData, kind: "collect" | "refund"): Prom
   if (cents == null) return { ok: false, message: "金额需要大于 0，最多两位小数。" };
   try {
     await prisma.$transaction(async (tx) => {
-      const signed = kind === "refund" ? -cents : cents;
-      const recent = await tx.payment.findFirst({
-        where: {
-          organizationId: user.organizationId,
-          enrollmentId,
-          createdById: user.id,
-          voidedAt: null,
-          amount: new Prisma.Decimal(signed).dividedBy(100),
-          createdAt: { gte: new Date(Date.now() - 8_000) },
-        },
-        select: { id: true },
-      });
-      if (recent) throw new CourseHourError(kind === "refund" ? "刚才已经保存过相同的退费，没有重复写入。" : "刚才已经保存过相同的收款，没有重复写入。");
       await recordPayment(tx, {
         organizationId: user.organizationId,
         actorId: user.id,

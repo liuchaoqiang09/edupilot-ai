@@ -159,6 +159,21 @@ export async function recordPayment(
   if (input.kind === "refund" && (!reason || reason.length > 80)) throw new CourseHourError("退费原因需要 1 到 80 个字。");
   if (reason.length > 80) throw new CourseHourError("说明不能超过 80 个字。");
   const signed = input.kind === "refund" ? -input.amountCents : input.amountCents;
+  // 幂等放在报名行锁内，避免并发连点双收/双退。
+  const recent = await tx.payment.findFirst({
+    where: {
+      organizationId: input.organizationId,
+      enrollmentId: enrollment.id,
+      createdById: input.actorId,
+      voidedAt: null,
+      amount: decimalFromCents(signed),
+      createdAt: { gte: new Date(Date.now() - 8_000) },
+    },
+    select: { id: true },
+  });
+  if (recent) {
+    throw new CourseHourError(input.kind === "refund" ? "刚才已经保存过相同的退费，没有重复写入。" : "刚才已经保存过相同的收款，没有重复写入。");
+  }
   if (input.kind === "refund") {
     const open = await tx.payment.findMany({
       where: { enrollmentId: enrollment.id, organizationId: input.organizationId, voidedAt: null },

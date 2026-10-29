@@ -24,13 +24,18 @@ test("attendance save locks lesson teacher and lessonStudent rows", async () => 
 });
 
 test("parent leave locks roster row and blocks inactive students", async () => {
-  const source = await import("node:fs/promises").then((fs) =>
+  const actions = await import("node:fs/promises").then((fs) =>
     fs.readFile(fileURLToPath(new URL("../app/parent/schedule/actions.ts", import.meta.url)), "utf8"),
   );
-  assert.match(source, /FOR UPDATE/);
-  assert.match(source, /孩子已停用，不能再请假/);
-  assert.match(source, /老师刚保存了考勤/);
-  assert.match(source, /最终以老师保存为准/);
+  const core = await import("node:fs/promises").then((fs) =>
+    fs.readFile(fileURLToPath(new URL("../lib/parent-leave.ts", import.meta.url)), "utf8"),
+  );
+  assert.match(actions, /applyParentLeave/);
+  assert.match(actions, /applyCancelParentLeave/);
+  assert.match(core, /FOR UPDATE/);
+  assert.match(core, /孩子已停用，不能再请假/);
+  assert.match(core, /老师刚保存了考勤/);
+  assert.match(core, /最终以老师保存为准/);
 });
 
 test("substitute attendance follows current teacherId; original teacher cannot match", async () => {

@@ -150,6 +150,27 @@ export async function notifyReportPublished(input: {
   });
 }
 
+export async function notifyReportReturned(input: {
+  organizationId: string;
+  reportId: string;
+  studentId: string;
+  courseName: string;
+  when: Date;
+  reason: string;
+}) {
+  const note = input.reason.trim().slice(0, 80);
+  await notifyLinkedParents({
+    organizationId: input.organizationId,
+    studentIds: [input.studentId],
+    kind: "REPORT",
+    title: "教学报告已撤回",
+    body: `${formatDateTime(input.when)}的${input.courseName}报告已撤回，暂时不可查看${note ? `（${note}）` : ""}`,
+    href: "/parent/reports",
+    dedupeKey: `report-return:${input.reportId}:${Date.now()}`,
+    occurredAt: input.when,
+  });
+}
+
 /** 用正文里的业务日期回填历史消息的 occurredAt。 */
 export async function backfillNoticeOccurredAt() {
   const rows = await prisma.parentNotice.findMany({

@@ -63,43 +63,71 @@ test("owner queries never cross organizations when forged ids are used", async (
 });
 
 test("hour adjustments refuse balances below zero inside the transaction path", async () => {
-  const enrollment = await prisma.enrollment.findFirst({
-    where: { course: { billingType: "PER_LESSON" }, student: { status: "ACTIVE" } },
-    select: { organizationId: true, studentId: true, courseId: true },
+  const course = await prisma.course.findFirst({
+    where: { billingType: "PER_LESSON", status: "ACTIVE" },
+    select: { id: true, organizationId: true },
   });
-  if (!enrollment) {
-    assert.ok(true, "no lesson enrollment to probe");
+  if (!course) {
+    assert.ok(true, "no lesson course to probe");
     return;
   }
-  const balance = await prisma.courseHourBalance.findFirst({
-    where: {
-      organizationId: enrollment.organizationId,
-      studentId: enrollment.studentId,
-      courseId: enrollment.courseId,
-    },
-    select: { remainingHours: true },
-  });
-  const remaining = balance?.remainingHours ?? 0;
   const actor = await prisma.user.findFirst({
-    where: { organizationId: enrollment.organizationId, roles: { has: "OWNER" } },
+    where: { organizationId: course.organizationId, roles: { has: "OWNER" } },
     select: { id: true, name: true },
   });
   assert.ok(actor);
-  await assert.rejects(
-    () =>
-      prisma.$transaction((tx) =>
-        adjustLessonHours(tx, {
-          organizationId: enrollment.organizationId,
-          actorId: actor!.id,
-          actorName: actor!.name,
-          studentId: enrollment.studentId,
-          courseId: enrollment.courseId,
-          deltaHours: -(remaining + 1),
-          reason: "QA probe below zero",
-        }),
-      ),
-    (error: unknown) => error instanceof CourseHourError && /不能小于 0/.test(error.message),
-  );
+  const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const student = await prisma.student.create({
+    data: {
+      organizationId: course.organizationId,
+      name: `课时探针-${suffix}`,
+      studentNo: `QA-H-${suffix}`.slice(0, 32),
+      status: "ACTIVE",
+    },
+    select: { id: true },
+  });
+  await prisma.enrollment.create({
+    data: {
+      organizationId: course.organizationId,
+      studentId: student.id,
+      courseId: course.id,
+      amountDue: 0,
+      amount: 0,
+      hoursAdded: 0,
+      status: "PAID",
+      createdById: actor.id,
+    },
+  });
+  await prisma.courseHourBalance.create({
+    data: {
+      organizationId: course.organizationId,
+      studentId: student.id,
+      courseId: course.id,
+      remainingHours: 0,
+    },
+  });
+  try {
+    await assert.rejects(
+      () =>
+        prisma.$transaction((tx) =>
+          adjustLessonHours(tx, {
+            organizationId: course.organizationId,
+            actorId: actor.id,
+            actorName: actor.name,
+            studentId: student.id,
+            courseId: course.id,
+            deltaHours: -1,
+            reason: "QA probe below zero",
+          }),
+        ),
+      (error: unknown) => error instanceof CourseHourError && /不能小于 0/.test(error.message),
+    );
+  } finally {
+    await prisma.hourAdjustment.deleteMany({ where: { studentId: student.id } });
+    await prisma.courseHourBalance.deleteMany({ where: { studentId: student.id } });
+    await prisma.enrollment.deleteMany({ where: { studentId: student.id } });
+    await prisma.student.deleteMany({ where: { id: student.id } });
+  }
 });
 
 test("assistant write tool catalog has no physical delete capability", async () => {

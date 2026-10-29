@@ -11,24 +11,31 @@ import { createExamDraft, markExamRead, saveExamResults } from "@/lib/exam-flow"
 import { prisma } from "@/lib/prisma";
 
 async function demoTeacherClass() {
-  const org = await prisma.organization.findFirst({ select: { id: true } });
-  assert.ok(org);
   const teacher = await prisma.teacher.findFirst({
     where: {
-      organizationId: org.id,
       status: "ACTIVE",
       userId: { not: null },
       classGroups: { some: { status: "ACTIVE", enrollments: { some: { student: { status: "ACTIVE" } } } } },
     },
-    select: { id: true, userId: true, user: { select: { id: true, name: true } } },
+    select: {
+      id: true,
+      organizationId: true,
+      userId: true,
+      user: { select: { id: true, name: true } },
+    },
   });
-  assert.ok(teacher?.userId && teacher.user);
+  assert.ok(teacher?.userId && teacher.user, "需要有登录账号且带在读班级的主讲教师");
   const classGroup = await prisma.classGroup.findFirst({
-    where: { organizationId: org.id, teacherId: teacher.id, status: "ACTIVE", enrollments: { some: { student: { status: "ACTIVE" } } } },
+    where: {
+      organizationId: teacher.organizationId,
+      teacherId: teacher.id,
+      status: "ACTIVE",
+      enrollments: { some: { student: { status: "ACTIVE" } } },
+    },
     select: { id: true },
   });
   assert.ok(classGroup);
-  return { orgId: org.id, teacher, classGroupId: classGroup.id };
+  return { orgId: teacher.organizationId, teacher, classGroupId: classGroup.id };
 }
 
 test("EX-06 负分与评语超长失败；等级模式展示", () => {

@@ -77,7 +77,11 @@ test("parent leave and photo routes force parentStudentLink", async () => {
   const search = await import("node:fs/promises").then((fs) =>
     fs.readFile(fileURLToPath(new URL("../app/api/owner/search/route.ts", import.meta.url)), "utf8"),
   );
-  assert.match(leave, /parentLinks:\s*\{\s*some:\s*\{\s*parentUserId:\s*user\.id/);
+  assert.match(leave, /applyParentLeave/);
+  const leaveCore = await import("node:fs/promises").then((fs) =>
+    fs.readFile(fileURLToPath(new URL("../lib/parent-leave.ts", import.meta.url)), "utf8"),
+  );
+  assert.match(leaveCore, /parentLinks:\s*\{\s*some:\s*\{\s*parentUserId:\s*actor\.id/);
   assert.match(photos, /parentStudentLink\.findFirst/);
   assert.match(photos, /status === "PUBLISHED"/);
   assert.match(search, /roles\.includes\("OWNER"\)/);

@@ -123,8 +123,8 @@ export async function saveExamResults(input: {
     },
   });
   if (!exam) return { ok: false as const, message: "找不到这场考试，或你不是录入教师。" };
-  if (exam.status === "PUBLISHED" && input.publish) {
-    // allow re-save while published as revision publish
+  if (exam.status === "PUBLISHED" && !input.publish) {
+    return { ok: false as const, message: "考试已发布。如需改分请再次发布，家长会收到更新通知。" };
   }
 
   const summaryCheck = validateClassSummary(input.classSummary);

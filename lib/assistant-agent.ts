@@ -193,7 +193,7 @@ const mutationTools: OpenAI.Chat.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "publish_report",
-      description: "准备发布一份已经确认的教学报告。调用后不会立刻写入，系统会请用户确认。只有这节课的授课教师能发布。",
+      description: "准备发布教学报告（草稿可先确认再发布）。调用后不会立刻写入，系统会请用户确认。只有这节课的授课教师能发布。",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -676,11 +676,22 @@ async function previewPublish(actor: Actor, args: Record<string, unknown>): Prom
     });
     if (teacher?.id !== report.lessonSession.teacherId) return { ok: false, message: "只有这节课的授课教师可以发布报告。" };
   }
-  if (report.status !== "CONFIRMED") return { ok: false, message: "只能发布已经确认的报告。草稿需要老师先确认。" };
+  if (!["DRAFT", "CONFIRMED", "RETURNED"].includes(report.status)) {
+    return { ok: false, message: "这份报告当前不能发布。" };
+  }
+  const org = await prisma.organization.findUnique({
+    where: { id: actor.organizationId },
+    select: { aiTeacherMustConfirm: true },
+  });
+  const mustConfirm = org?.aiTeacherMustConfirm !== false;
+  const detail =
+    mustConfirm && report.status !== "CONFIRMED"
+      ? "机构要求先确认。确认后家长仍看不到，需要再发布一次才会给家长。"
+      : "发布后家长可以查看。";
   return {
     ok: true,
     summary: `小星助教准备发布【${report.student.name}】的报告【${report.lessonSession.title ?? "课次"}】，是否确认执行？`,
-    detail: "发布后家长可以查看。",
+    detail,
     args: { reportId: report.id, teacherId: report.lessonSession.teacherId },
   };
 }

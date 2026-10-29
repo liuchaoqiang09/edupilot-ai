@@ -367,9 +367,11 @@ export default async function OwnerBillingPage({
       openRowKey={params.focus ?? ""}
       openStudentId={params.form === "enroll" ? params.who ?? "" : ""}
     />
-    <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
-      <Pager page={window.page} pages={window.pages} href={pageHref} size={billingPageSize} />
-    </div>
+    {window.pages > 1 ? (
+      <div className="mt-3 overflow-hidden rounded-2xl border border-[var(--line)] bg-white">
+        <Pager page={window.page} pages={window.pages} href={pageHref} size={billingPageSize} />
+      </div>
+    ) : null}
     </>
   );
 }

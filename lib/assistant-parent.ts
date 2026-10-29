@@ -3,8 +3,8 @@
  * 不能办教务写入、财务、全机构名单。
  */
 import type OpenAI from "openai";
-import { writeAudit } from "@/lib/audit";
 import { dayRange, formatClock, formatDateTime, shanghaiDateKey, shiftDate } from "@/lib/datetime";
+import { applyCancelParentLeave, applyParentLeave } from "@/lib/parent-leave";
 import { linkedParentChildren, parentVisibleLessonFilter } from "@/lib/parent-scope";
 import { prisma } from "@/lib/prisma";
 import type { AssistantMode } from "@/lib/assistant-mode";
@@ -266,7 +266,11 @@ export async function runParentTool(actor: ParentActor, name: string, args: Reco
       where: {
         organizationId: actor.organizationId,
         studentId: { in: ids },
-        lessonSession: { teachingRecord: { homework: { not: null } } },
+        ...parentVisibleLessonFilter(),
+        lessonSession: {
+          status: { not: "CANCELLED" },
+          teachingRecord: { is: { homework: { not: "" } } },
+        },
       },
       select: {
         id: true,
@@ -420,6 +424,8 @@ export async function previewParentWrite(actor: ParentActor, name: string, args:
         id: true,
         parentLeaveAt: true,
         hoursCharged: true,
+        attendanceStatus: true,
+        makeups: { select: { id: true } },
         student: { select: { name: true, status: true } },
         lessonSession: { select: { startAt: true, status: true, title: true, course: { select: { name: true } } } },
       },
@@ -427,8 +433,12 @@ export async function previewParentWrite(actor: ParentActor, name: string, args:
     if (!row || row.lessonSession.status === "CANCELLED") return { ok: false, message: "找不到这节课，或课次已取消。" };
     if (row.student.status !== "ACTIVE") return { ok: false, message: "孩子已停用，不能请假。" };
     if (row.lessonSession.startAt.getTime() <= Date.now()) return { ok: false, message: "课次已经开始，不能再请假。" };
-    if (row.hoursCharged) return { ok: false, message: "老师已保存考勤，不能再请假。" };
+    if (row.hoursCharged) return { ok: false, message: "老师已保存考勤并扣过课时，不能再请假。" };
+    if (row.makeups.length > 0) return { ok: false, message: "这次请假已安排补课，不能再改。" };
     if (row.parentLeaveAt) return { ok: false, message: "已经提交过请假。" };
+    if (row.attendanceStatus !== "NOT_MARKED" && row.attendanceStatus !== "LEAVE") {
+      return { ok: false, message: "老师已点名，不能再请假。最终以老师保存的考勤为准。" };
+    }
     return {
       ok: true,
       summary: `小星助教准备为【${row.student.name}】请假：【${row.lessonSession.course.name}${row.lessonSession.title ? ` · ${row.lessonSession.title}` : ""}】，是否确认？`,
@@ -449,6 +459,8 @@ export async function previewParentWrite(actor: ParentActor, name: string, args:
       },
       select: {
         id: true,
+        hoursCharged: true,
+        attendanceStatus: true,
         student: { select: { name: true } },
         lessonSession: { select: { startAt: true, title: true, course: { select: { name: true } } } },
         makeups: { select: { id: true } },
@@ -456,7 +468,9 @@ export async function previewParentWrite(actor: ParentActor, name: string, args:
     });
     if (!row) return { ok: false, message: "找不到已提交的请假。" };
     if (row.lessonSession.startAt.getTime() <= Date.now()) return { ok: false, message: "课次已开始，不能取消请假。" };
-    if (row.makeups.length > 0) return { ok: false, message: "已安排补课，不能取消请假。" };
+    if (row.hoursCharged || row.makeups.length > 0 || row.attendanceStatus !== "LEAVE") {
+      return { ok: false, message: "老师已改考勤或已安排补课，不能取消请假。" };
+    }
     return {
       ok: true,
       summary: `小星助教准备取消【${row.student.name}】的请假：【${row.lessonSession.course.name}】，是否确认？`,
@@ -508,76 +522,17 @@ export async function previewParentWrite(actor: ParentActor, name: string, args:
 
 export async function executeParentWrite(actor: ParentActor, name: string, args: Record<string, string>) {
   if (name === "execute_parent_leave") {
-    const note = (args.note || "家长请假").slice(0, 80);
-    const row = await prisma.lessonStudent.findFirst({
-      where: { id: args.lessonStudentId, organizationId: actor.organizationId, student: { parentLinks: { some: { parentUserId: actor.id } } } },
-      select: {
-        id: true,
-        student: { select: { name: true } },
-        lessonSession: { select: { startAt: true, status: true, title: true, course: { select: { name: true } } } },
-      },
-    });
-    if (!row || row.lessonSession.status === "CANCELLED") return { ok: false as const, message: "找不到这节课。" };
-    if (row.lessonSession.startAt.getTime() <= Date.now()) return { ok: false as const, message: "课次已经开始。" };
-    await prisma.$transaction(async (tx) => {
-      await tx.lessonStudent.update({
-        where: { id: row.id },
-        data: {
-          attendanceStatus: "LEAVE",
-          leaveKind: "PERSONAL",
-          attendanceNote: note,
-          parentLeaveAt: new Date(),
-          parentLeaveNote: note,
-          lastAction: "家长请假",
-        },
-      });
-      await writeAudit(tx, {
-        organizationId: actor.organizationId,
-        actorId: actor.id,
-        action: "PARENT_LEAVE",
-        targetType: "LessonStudent",
-        targetId: row.id,
-        detail: `${actor.name}为${row.student.name}请假：${row.lessonSession.course.name}`,
-      });
-    });
-    return { ok: true as const, message: `已为${row.student.name}提交请假。` };
+    return applyParentLeave(
+      { id: actor.id, name: actor.name, organizationId: actor.organizationId },
+      { lessonStudentId: args.lessonStudentId, note: args.note || "" },
+    );
   }
 
   if (name === "execute_cancel_parent_leave") {
-    const row = await prisma.lessonStudent.findFirst({
-      where: {
-        id: args.lessonStudentId,
-        organizationId: actor.organizationId,
-        parentLeaveAt: { not: null },
-        student: { parentLinks: { some: { parentUserId: actor.id } } },
-      },
-      select: { id: true, student: { select: { name: true } }, lessonSession: { select: { startAt: true } }, makeups: { select: { id: true } } },
-    });
-    if (!row) return { ok: false as const, message: "找不到已提交的请假。" };
-    if (row.lessonSession.startAt.getTime() <= Date.now()) return { ok: false as const, message: "课次已开始。" };
-    if (row.makeups.length > 0) return { ok: false as const, message: "已安排补课，不能取消。" };
-    await prisma.$transaction(async (tx) => {
-      await tx.lessonStudent.update({
-        where: { id: row.id },
-        data: {
-          attendanceStatus: "NOT_MARKED",
-          leaveKind: null,
-          attendanceNote: null,
-          parentLeaveAt: null,
-          parentLeaveNote: null,
-          lastAction: "取消家长请假",
-        },
-      });
-      await writeAudit(tx, {
-        organizationId: actor.organizationId,
-        actorId: actor.id,
-        action: "PARENT_LEAVE_CANCEL",
-        targetType: "LessonStudent",
-        targetId: row.id,
-        detail: `${actor.name}取消了${row.student.name}的请假`,
-      });
-    });
-    return { ok: true as const, message: `已取消${row.student.name}的请假。` };
+    return applyCancelParentLeave(
+      { id: actor.id, name: actor.name, organizationId: actor.organizationId },
+      { lessonStudentId: args.lessonStudentId },
+    );
   }
 
   if (name === "execute_reply_report") {

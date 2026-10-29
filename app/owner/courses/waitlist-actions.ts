@@ -56,28 +56,54 @@ export async function admitWaitlist(waitlistId: string): Promise<{ ok: boolean; 
   });
   if (!row || row.classGroup.status !== "ACTIVE") return { ok: false, message: "这条排队不存在，或班级已经归档。" };
   if (row.student.status !== "ACTIVE") return { ok: false, message: "这名学生已停用，不能转入班级。" };
-  const members = await prisma.enrollment.findMany({
-    where: { organizationId: user.organizationId, classGroupId: row.classGroupId, student: { status: "ACTIVE" } },
-    select: { studentId: true },
-  });
-  const enrolledIds = new Set(members.map((item) => item.studentId));
-  const alreadyHere = enrolledIds.has(row.studentId);
-  if (!alreadyHere && classIsFull(row.classGroup.capacity, enrolledIds.size)) {
-    return { ok: false, message: `「${row.classGroup.name}」已满，容量 ${row.classGroup.capacity}，当前在读 ${enrolledIds.size}。腾出位置后再转入。` };
-  }
   const enrollment = await prisma.enrollment.findFirst({
     where: { organizationId: user.organizationId, studentId: row.studentId, courseId: row.classGroup.courseId },
     orderBy: { createdAt: "desc" },
     select: { id: true, classGroupId: true },
   });
   if (!enrollment) return { ok: false, message: "这名学生还没有这门课的报名。请先记录报名，再转入班级。" };
-  await prisma.$transaction(async (tx) => {
-    await tx.enrollment.updateMany({
-      where: { organizationId: user.organizationId, studentId: row.studentId, courseId: row.classGroup.courseId },
-      data: { classGroupId: row.classGroupId },
+
+  let alreadyHere = false;
+  try {
+    await prisma.$transaction(async (tx) => {
+      // 锁班级下在读报名，转入前再核容量，避免并发超额。
+      await tx.$queryRaw`
+        SELECT id FROM "edupilot"."Enrollment"
+        WHERE "organizationId" = ${user.organizationId} AND "classGroupId" = ${row.classGroupId}
+        FOR UPDATE
+      `;
+      const waiting = await tx.classWaitlist.findFirst({
+        where: { id: row.id, organizationId: user.organizationId },
+        select: { id: true },
+      });
+      if (!waiting) throw new Error("GONE");
+      const members = await tx.enrollment.findMany({
+        where: { organizationId: user.organizationId, classGroupId: row.classGroupId, student: { status: "ACTIVE" } },
+        select: { studentId: true },
+      });
+      const enrolledIds = new Set(members.map((item) => item.studentId));
+      alreadyHere = enrolledIds.has(row.studentId);
+      if (!alreadyHere && classIsFull(row.classGroup.capacity, enrolledIds.size)) {
+        throw new Error("FULL");
+      }
+      await tx.enrollment.updateMany({
+        where: { organizationId: user.organizationId, studentId: row.studentId, courseId: row.classGroup.courseId },
+        data: { classGroupId: row.classGroupId },
+      });
+      await tx.classWaitlist.delete({ where: { id: row.id } });
     });
-    await tx.classWaitlist.delete({ where: { id: row.id } });
-  });
+  } catch (error) {
+    if (error instanceof Error && error.message === "FULL") {
+      const members = await prisma.enrollment.count({
+        where: { organizationId: user.organizationId, classGroupId: row.classGroupId, student: { status: "ACTIVE" } },
+      });
+      return { ok: false, message: `「${row.classGroup.name}」已满，容量 ${row.classGroup.capacity}，当前在读 ${members}。腾出位置后再转入。` };
+    }
+    if (error instanceof Error && error.message === "GONE") {
+      return { ok: false, message: "这条排队已被处理，请刷新后再看。" };
+    }
+    throw error;
+  }
   refresh();
   revalidatePath("/owner/billing");
   return { ok: true, message: alreadyHere ? `${row.student.name} 已经在这个班，已从排队中移除。` : `${row.student.name} 已转入「${row.classGroup.name}」，并移出排队。` };

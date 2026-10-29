@@ -7,7 +7,7 @@ import { admitWaitlist, joinClassWaitlist } from "@/app/owner/courses/waitlist-a
 import { issueParentInvite, issueTeacherInvite } from "@/app/owner/membership/actions";
 import { returnReport } from "@/app/owner/reports/actions";
 import { createClassroom, updateClassroom } from "@/app/owner/rooms/actions";
-import { cancelLesson, changeLessonClassroom, createRecurringLessons, updateLessonTeacher } from "@/app/owner/schedule/actions";
+import { cancelLesson, changeLessonClassroom, createRecurringLessons, rescheduleLesson, updateLessonTeacher } from "@/app/owner/schedule/actions";
 import { saveOrganizationSettings } from "@/app/owner/settings/actions";
 import { createStudent, deactivateStudent, setStudentStatus, updateStudent } from "@/app/owner/students/actions";
 import { createTeacher, setTeacherStatus } from "@/app/owner/teachers/actions";
@@ -17,7 +17,7 @@ import { recordPayment } from "@/lib/billing-ledger";
 import { syncAttendanceCharge, CourseHourError } from "@/lib/course-hours";
 import { resolveTeacherAddSeat } from "@/lib/lesson-seat-rules";
 import { ownerOverview, ownerSnapshot } from "@/lib/dashboard";
-import { formatClock, formatDateTime, parseShanghaiDateTime, shanghaiDateKey } from "@/lib/datetime";
+import { formatClock, formatDateTime, parseShanghaiDateTime, shanghaiDateKey, shanghaiDateTimeLocalValue } from "@/lib/datetime";
 import { isPaymentMethod, paymentMethodLabel } from "@/lib/enrollment-money";
 import { findScheduleConflicts, roomCapacityWarning, singleConflictWarning, type ExistingLesson } from "@/lib/lesson-conflicts";
 import { attendanceDisplayLabel, toAttendanceFields } from "@/lib/leave-kind";
@@ -393,7 +393,7 @@ export function operationTools(actor: Actor): OpenAI.Chat.ChatCompletionTool[] {
     tool("lookup_teacher", "按教师姓名查找教师 ID。仅负责人可用。", { name: textProp("教师姓名") }, ["name"]),
     tool("get_audit_logs", "查询本机构最近的操作记录。仅负责人可用。", {}, []),
     tool("get_stats_summary", "查询基础统计：在读学生、教师、课次、待填写记录和待确认报告。仅负责人可用。", {}, []),
-    tool("get_revenue_summary", "查询本机构实收金额。按 Asia/Shanghai 自然月统计，只计未作废流水。问赚了多少、本月收入、收款合计时必须调用。禁止自己编数字。", {}, []),
+    tool("get_revenue_summary", "查询本机构实收金额。按 Asia/Shanghai 自然月统计，只计未作废流水。问赚了多少、本月收入、收款合计时必须调用。禁止自行估算或编造。", {}, []),
     tool("create_student", "准备新建学生。不会立刻写入。", {
       name: textProp("学生姓名"),
       grade: textProp("可选年级"),
@@ -1214,18 +1214,68 @@ async function previewOrg(actor: Actor, args: Record<string, unknown>): Promise<
 async function previewAddStudent(actor: Actor, args: Record<string, unknown>): Promise<Preview> {
   const lesson = await prisma.lessonSession.findFirst({
     where: { id: str(args, "lessonId"), organizationId: actor.organizationId, status: { not: "CANCELLED" }, ...(actor.area === "teacher" ? { teacherId: actor.teacherId ?? "__none__" } : {}) },
-    select: { id: true, title: true, startAt: true },
+    select: {
+      id: true,
+      title: true,
+      startAt: true,
+      endAt: true,
+      teacherId: true,
+      classGroupId: true,
+      location: true,
+      classroomId: true,
+      courseId: true,
+      students: { select: { studentId: true } },
+      classGroup: { select: { capacity: true, name: true } },
+      classroom: { select: { capacity: true, name: true } },
+    },
   });
   const student = await prisma.student.findFirst({ where: { id: str(args, "studentId"), organizationId: actor.organizationId, status: "ACTIVE" }, select: { id: true, name: true } });
   const seat = str(args, "seat");
   if (!lesson || !student) return { ok: false, message: "没有找到课次或在读学生，或你不能修改这节课。" };
   if (actor.area === "teacher" && lesson.startAt.getTime() <= Date.now()) return { ok: false, message: "课次已经开始，不能再改名单。" };
   if (!["ENROLLED", "TRIAL", "GUEST"].includes(seat)) return { ok: false, message: "请选择本班、试听或临时。" };
+  if (lesson.students.some((row) => row.studentId === student.id)) return { ok: false, message: "这名学生已经在这节课的名单里。" };
+  try {
+    await resolveTeacherAddSeat(prisma, {
+      organizationId: actor.organizationId,
+      studentId: student.id,
+      studentName: student.name,
+      courseId: lesson.courseId,
+      classGroupId: lesson.classGroupId,
+      requested: seat,
+    });
+  } catch (error) {
+    if (error instanceof CourseHourError) return { ok: false, message: error.message };
+    throw error;
+  }
+  const conflicts = findScheduleConflicts({
+    teacherId: lesson.teacherId,
+    classGroupId: lesson.classGroupId,
+    location: lesson.location,
+    classroomId: lesson.classroomId,
+    studentIds: [...lesson.students.map((row) => row.studentId), student.id],
+    startAt: lesson.startAt,
+    endAt: lesson.endAt,
+  }, await lessonsInWindow(actor.organizationId, lesson.startAt, lesson.endAt, [...lesson.students.map((row) => row.studentId), student.id], lesson.id), ["student"]);
+  const rosterCount = lesson.students.length + 1;
+  const capacityNotes = [
+    lesson.classroom?.capacity != null
+      ? roomCapacityWarning(rosterCount, lesson.classroom.capacity, lesson.classroom.name)
+      : "",
+    lesson.classGroup.capacity != null && rosterCount > lesson.classGroup.capacity
+      ? `班级「${lesson.classGroup.name}」容量 ${lesson.classGroup.capacity}，加入后名单 ${rosterCount} 人。`
+      : "",
+  ].filter(Boolean);
+  const warn = [
+    "本班须已报名且班级一致；临时须已报名该课程（可跨班）；试听仅限未报名。",
+    conflicts.length > 0 ? singleConflictWarning(conflicts, formatDateTime, "确认后仍会加入。") : "",
+    ...capacityNotes,
+  ].filter(Boolean).join("\n");
   return {
     ok: true,
     summary: `把【${student.name}】加入【${lesson.title ?? "课次"}】`,
-    detail: "本班须已报名且班级一致；临时须已报名该课程（可跨班）；试听可不报名。",
-    args: { lessonId: lesson.id, studentId: student.id, seat },
+    detail: warn,
+    args: { lessonId: lesson.id, studentId: student.id, seat, acknowledgeConflict: conflicts.length > 0 || capacityNotes.length > 0 ? "1" : "0" },
   };
 }
 
@@ -1246,18 +1296,57 @@ async function executeOrg(actor: Actor, name: string) {
 }
 
 async function executeAddStudent(actor: Actor, args: Record<string, string | number>) {
-  const data = form({ studentId: args.studentId, seat: args.seat, acknowledgeConflict: "1" });
+  const ack = String(args.acknowledgeConflict ?? "") === "1";
+  const data = form({ studentId: args.studentId, seat: args.seat, ...(ack ? { acknowledgeConflict: "1" } : {}) });
   if (actor.area === "teacher") {
     const result = await addTeacherLessonStudent(String(args.lessonId), data);
+    if (result.warning && !ack) return { ok: false as const, message: result.warning };
     return { ok: result.ok, message: result.message || result.warning || "没有加入课次。" };
   }
   const lesson = await prisma.lessonSession.findFirst({
     where: { id: String(args.lessonId), organizationId: actor.organizationId, status: { not: "CANCELLED" } },
-    select: { id: true, title: true, courseId: true, classGroupId: true, students: { select: { studentId: true } } },
+    select: {
+      id: true,
+      title: true,
+      courseId: true,
+      classGroupId: true,
+      startAt: true,
+      endAt: true,
+      teacherId: true,
+      location: true,
+      classroomId: true,
+      students: { select: { studentId: true } },
+      classGroup: { select: { capacity: true, name: true } },
+      classroom: { select: { capacity: true, name: true } },
+    },
   });
   const student = await prisma.student.findFirst({ where: { id: String(args.studentId), organizationId: actor.organizationId, status: "ACTIVE" }, select: { id: true, name: true } });
   if (!lesson || !student) return { ok: false as const, message: "没有找到课次或在读学生。" };
   if (lesson.students.some((row) => row.studentId === student.id)) return { ok: false as const, message: "这名学生已经在这节课的名单里。" };
+  const conflicts = findScheduleConflicts({
+    teacherId: lesson.teacherId,
+    classGroupId: lesson.classGroupId,
+    location: lesson.location,
+    classroomId: lesson.classroomId,
+    studentIds: [...lesson.students.map((row) => row.studentId), student.id],
+    startAt: lesson.startAt,
+    endAt: lesson.endAt,
+  }, await lessonsInWindow(actor.organizationId, lesson.startAt, lesson.endAt, [...lesson.students.map((row) => row.studentId), student.id], lesson.id), ["student"]);
+  const rosterCount = lesson.students.length + 1;
+  const capacityNotes = [
+    lesson.classroom?.capacity != null
+      ? roomCapacityWarning(rosterCount, lesson.classroom.capacity, lesson.classroom.name)
+      : "",
+    lesson.classGroup.capacity != null && rosterCount > lesson.classGroup.capacity
+      ? `班级「${lesson.classGroup.name}」容量 ${lesson.classGroup.capacity}，加入后名单 ${rosterCount} 人。`
+      : "",
+  ].filter(Boolean);
+  if ((conflicts.length > 0 || capacityNotes.length > 0) && !ack) {
+    return {
+      ok: false as const,
+      message: [conflicts.length > 0 ? singleConflictWarning(conflicts, formatDateTime, "确认后仍会加入。") : "", ...capacityNotes].filter(Boolean).join("\n"),
+    };
+  }
   try {
     const resolved = await resolveTeacherAddSeat(prisma, {
       organizationId: actor.organizationId,
@@ -1554,31 +1643,24 @@ async function executeReschedule(actor: Actor, args: Record<string, string | num
   const endAt = new Date(String(args.endAt));
   const lesson = await prisma.lessonSession.findFirst({
     where: { id: String(args.lessonId), organizationId: actor.organizationId, status: { not: "CANCELLED" }, ...(actor.area === "teacher" ? { teacherId: actor.teacherId ?? "__none__" } : {}) },
-    select: { id: true, title: true, startAt: true, endAt: true, students: { select: { studentId: true } } },
+    select: { id: true, title: true, startAt: true, endAt: true, students: { select: { studentId: true, hoursCharged: true } } },
   });
   if (!lesson || Number.isNaN(startAt.getTime()) || endAt <= startAt) return { ok: false as const, message: "课次或时间已经变化，没有修改。" };
   if (actor.area === "teacher") {
     if (!actor.teacherId) return { ok: false as const, message: "当前账号不能提交调课。" };
     return submitLessonRequest({ organizationId: actor.organizationId, userId: actor.id, teacherId: actor.teacherId, lessonId: lesson.id, kind: "RESCHEDULE", startAt, endAt, note: "由小星助教提交" });
   }
-  const from = formatDateTime(lesson.startAt);
-  await prisma.$transaction(async (tx) => {
-    const updated = await tx.lessonSession.updateMany({ where: { id: lesson.id, organizationId: actor.organizationId }, data: { startAt, endAt } });
-    if (updated.count !== 1) throw new CourseHourError("课次已经变化，没有修改。");
-    await writeAudit(tx, { organizationId: actor.organizationId, actorId: actor.id, action: "LESSON_RESCHEDULED", targetType: "LessonSession", targetId: lesson.id, detail: `${actor.name}把「${lesson.title ?? "课次"}」从 ${from} 改到 ${formatDateTime(startAt)}` });
+  // 确认卡已展示冲突与已扣课时提示；走与页面相同的 rescheduleLesson 校验。
+  const data = form({
+    startAt: shanghaiDateTimeLocalValue(startAt),
+    endAt: shanghaiDateTimeLocalValue(endAt),
+    confirmCharged: "1",
+    acknowledgeConflict: "1",
   });
-  await cancelPendingLessonRequests(actor.organizationId, lesson.id, "负责人已直接修改时间");
-  if (lesson.startAt.getTime() !== startAt.getTime() || lesson.endAt.getTime() !== endAt.getTime()) {
-    await notifyLessonChange({
-      organizationId: actor.organizationId,
-      studentIds: lesson.students.map((row) => row.studentId),
-      title: lesson.title,
-      when: startAt,
-      change: `上课时间改为 ${formatDateTime(startAt)}–${formatClock(endAt)}`,
-      dedupeKey: `lesson:${lesson.id}:time:${startAt.toISOString()}:${endAt.toISOString()}`,
-    });
-  }
-  return { ok: true as const, message: "上课时间已修改。" };
+  const result = await rescheduleLesson(lesson.id, data);
+  if (result.warning) return { ok: false as const, message: result.warning };
+  if (result.needsChargeConfirm) return { ok: false as const, message: result.message || "需要先确认已扣课时后再改时间。" };
+  return { ok: result.ok, message: result.message || (result.ok ? "上课时间已修改。" : "没有修改上课时间。") };
 }
 
 async function teacherMakeup(actor: Actor, sourceId: string, targetLessonId: string) {
